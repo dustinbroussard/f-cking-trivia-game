@@ -1,18 +1,18 @@
-const CACHE_NAME = 'aftg-cache-v1';
+const CACHE_NAME = 'aftg-cache-v2';
 
 const PRECACHE_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/logo.png',
-  '/theme.mp3',
-  '/welcome.mp3',
-  '/correct.mp3',
-  '/wrong.mp3',
-  '/won.mp3',
-  '/lost.mp3'
+  './',
+  'index.html',
+  'manifest.webmanifest',
+  'icon-192.png',
+  'icon-512.png',
+  'logo.jpg',
+  'theme.mp3',
+  'welcome.mp3',
+  'correct.mp3',
+  'wrong.mp3',
+  'won.mp3',
+  'lost.mp3'
 ];
 
 self.addEventListener('install', event => {

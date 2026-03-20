@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Download, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { publicAsset } from '../assets';
 
 export function InstallPrompt() {
+  const logoSrc = publicAsset('logo.jpg');
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isVisible, setIsVisible] = useState(false);
 
@@ -73,7 +75,7 @@ export function InstallPrompt() {
           <div className="flex items-start justify-between">
             <div className="flex gap-3 items-center">
               <div className="w-12 h-12 bg-zinc-800 rounded-lg shrink-0 flex items-center justify-center p-2 shadow-inner">
-                <img src="/logo.png" alt="AFTG Logo" className="w-full h-full object-contain" />
+                <img src={logoSrc} alt="AFTG Logo" className="w-full h-full object-contain" />
               </div>
               <div>
                 <h3 className="text-white font-bold text-sm tracking-wide">Install AFTG</h3>

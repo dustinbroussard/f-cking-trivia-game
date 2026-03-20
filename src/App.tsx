@@ -29,12 +29,21 @@ import { QuestionCard } from './components/QuestionCard';
 import { CategoryTracker } from './components/CategoryTracker';
 import { Roast } from './components/Roast';
 import { InstallPrompt } from './components/InstallPrompt';
+import { publicAsset } from './assets';
 import { motion, AnimatePresence } from 'motion/react';
 import { LogOut, RefreshCcw, Trophy, ArrowLeft, Volume2, VolumeX, Send, Loader2, History, X } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { orderBy, limit } from 'firebase/firestore';
 
 export default function App() {
+  const themeAudioSrc = publicAsset('theme.mp3');
+  const welcomeAudioSrc = publicAsset('welcome.mp3');
+  const correctAudioSrc = publicAsset('correct.mp3');
+  const wrongAudioSrc = publicAsset('wrong.mp3');
+  const wonAudioSrc = publicAsset('won.mp3');
+  const lostAudioSrc = publicAsset('lost.mp3');
+  const logoSrc = publicAsset('logo.jpg');
+
   const [user, setUser] = useState<User | null>(null);
   const [game, setGame] = useState<GameState | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -541,12 +550,12 @@ export default function App() {
   if (!user) {
     return (
       <>
-        <audio ref={themeAudioRef} src="/theme.mp3" loop />
-        <audio ref={welcomeAudioRef} src="/welcome.mp3" />
-        <audio ref={correctAudioRef} src="/correct.mp3" />
-        <audio ref={wrongAudioRef} src="/wrong.mp3" />
-        <audio ref={wonAudioRef} src="/won.mp3" />
-        <audio ref={lostAudioRef} src="/lost.mp3" />
+        <audio ref={themeAudioRef} src={themeAudioSrc} loop />
+        <audio ref={welcomeAudioRef} src={welcomeAudioSrc} />
+        <audio ref={correctAudioRef} src={correctAudioSrc} />
+        <audio ref={wrongAudioRef} src={wrongAudioSrc} />
+        <audio ref={wonAudioRef} src={wonAudioSrc} />
+        <audio ref={lostAudioRef} src={lostAudioSrc} />
 
         <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-6 space-y-12 relative">
           <button 
@@ -564,7 +573,7 @@ export default function App() {
         >
           <div className="relative inline-block w-64 h-64 md:w-80 md:h-80">
             <img 
-              src="/logo.png" 
+              src={logoSrc} 
               alt="AFTG: A F-ing Trivia Game" 
               className="w-full h-full object-contain drop-shadow-[0_0_30px_rgba(255,255,255,0.1)]"
               referrerPolicy="no-referrer"
@@ -594,12 +603,12 @@ export default function App() {
 
   return (
     <>
-      <audio ref={themeAudioRef} src="/theme.mp3" loop />
-      <audio ref={welcomeAudioRef} src="/welcome.mp3" />
-      <audio ref={correctAudioRef} src="/correct.mp3" />
-      <audio ref={wrongAudioRef} src="/wrong.mp3" />
-      <audio ref={wonAudioRef} src="/won.mp3" />
-      <audio ref={lostAudioRef} src="/lost.mp3" />
+      <audio ref={themeAudioRef} src={themeAudioSrc} loop />
+      <audio ref={welcomeAudioRef} src={welcomeAudioSrc} />
+      <audio ref={correctAudioRef} src={correctAudioSrc} />
+      <audio ref={wrongAudioRef} src={wrongAudioSrc} />
+      <audio ref={wonAudioRef} src={wonAudioSrc} />
+      <audio ref={lostAudioRef} src={lostAudioSrc} />
 
       <InstallPrompt />
 

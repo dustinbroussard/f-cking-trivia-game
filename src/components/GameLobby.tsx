@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { motion } from 'motion/react';
 import { Trophy, Users, Gamepad2, User, Plus, Upload } from 'lucide-react';
+import { publicAsset } from '../assets';
 
 interface GameLobbyProps {
   onStartSolo: (avatarUrl: string) => void;
@@ -9,6 +10,7 @@ interface GameLobbyProps {
 }
 
 export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti, onJoinMulti }) => {
+  const logoSrc = publicAsset('logo.jpg');
   const [joinCode, setJoinCode] = useState('');
   const [showJoinInput, setShowJoinInput] = useState(false);
   const [selectedAvatar, setSelectedAvatar] = useState('');
@@ -58,7 +60,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti,
       <div className="text-center relative">
         <div className="relative inline-block w-64 h-64 md:w-80 md:h-80">
           <img 
-            src="/logo.png" 
+            src={logoSrc} 
             alt="AFTG: A F-ing Trivia Game" 
             className="w-full h-full object-contain drop-shadow-[0_0_30px_rgba(255,255,255,0.1)]"
             referrerPolicy="no-referrer"
