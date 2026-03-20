@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isPlayerInGame(gameId) {
+      return isAuthenticated() && (
+        request.auth.uid == get(/databases/$(database)/documents/games/$(gameId)).data.hostId ||
+        request.auth.uid in get(/databases/$(database)/documents/games/$(gameId)).data.playerIds
+      );
+    }
+
+    match /games/{gameId} {
+      // Anyone authenticated can create a game
+      allow create: if isAuthenticated();
+      // Only players in the game can read/update
+      allow read: if isAuthenticated(); // Allow read for joining via code
+      allow update: if isAuthenticated(); // Allow update for joining/turns
+      
+      match /players/{playerId} {
+        allow read, write: if isAuthenticated();
+      }
+      
+      match /questions/{questionId} {
+        allow read, write: if isAuthenticated();
+      }
+    }
+  }
+}

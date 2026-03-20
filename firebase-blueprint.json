@@ -1,0 +1,64 @@
+{
+  "entities": {
+    "Game": {
+      "title": "Game",
+      "description": "A trivia game session.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string", "description": "4-digit join code" },
+        "status": { "type": "string", "enum": ["waiting", "active", "completed"] },
+        "hostId": { "type": "string" },
+        "playerIds": { "type": "array", "items": { "type": "string" } },
+        "currentTurn": { "type": "string", "description": "UID of the player whose turn it is" },
+        "winnerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "status", "hostId", "playerIds", "createdAt"]
+    },
+    "Player": {
+      "title": "Player",
+      "description": "A player in a game.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "score": { "type": "integer" },
+        "streak": { "type": "integer" },
+        "completedCategories": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["uid", "name", "score", "streak", "completedCategories"]
+    },
+    "Question": {
+      "title": "Question",
+      "description": "A trivia question generated for a game.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "category": { "type": "string" },
+        "question": { "type": "string" },
+        "choices": { "type": "array", "items": { "type": "string" } },
+        "answerIndex": { "type": "integer" },
+        "correctQuip": { "type": "string" },
+        "wrongAnswerQuips": { "type": "object" },
+        "used": { "type": "boolean" }
+      },
+      "required": ["category", "question", "choices", "answerIndex", "correctQuip", "wrongAnswerQuips", "used"]
+    }
+  },
+  "firestore": {
+    "/games/{gameId}": {
+      "schema": "Game",
+      "description": "Main game document"
+    },
+    "/games/{gameId}/players/{playerId}": {
+      "schema": "Player",
+      "description": "Players in the game"
+    },
+    "/games/{gameId}/questions/{questionId}": {
+      "schema": "Question",
+      "description": "Questions for this game"
+    }
+  }
+}
