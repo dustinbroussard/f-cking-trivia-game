@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { 
   doc, 
@@ -29,7 +29,7 @@ import { QuestionCard } from './components/QuestionCard';
 import { CategoryTracker } from './components/CategoryTracker';
 import { Roast } from './components/Roast';
 import { motion, AnimatePresence } from 'motion/react';
-import { LogOut, RefreshCcw, Trophy, ArrowLeft } from 'lucide-react';
+import { LogOut, RefreshCcw, Trophy, ArrowLeft, Volume2, VolumeX } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 export default function App() {
@@ -44,6 +44,56 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSolo, setIsSolo] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(false);
+
+  const themeAudioRef = useRef<HTMLAudioElement>(null);
+  const welcomeAudioRef = useRef<HTMLAudioElement>(null);
+  const correctAudioRef = useRef<HTMLAudioElement>(null);
+  const wrongAudioRef = useRef<HTMLAudioElement>(null);
+  const wonAudioRef = useRef<HTMLAudioElement>(null);
+  const lostAudioRef = useRef<HTMLAudioElement>(null);
+  const prevGameStatus = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!user) {
+      if (soundEnabled) {
+        if (themeAudioRef.current) {
+          themeAudioRef.current.volume = 0.3;
+          themeAudioRef.current.play().catch(console.error);
+        }
+        if (welcomeAudioRef.current) {
+          welcomeAudioRef.current.volume = 1.0;
+          welcomeAudioRef.current.play().catch(console.error);
+        }
+      } else {
+        if (themeAudioRef.current) {
+          themeAudioRef.current.pause();
+        }
+        if (welcomeAudioRef.current) {
+          welcomeAudioRef.current.pause();
+        }
+      }
+    }
+  }, [soundEnabled, user]);
+
+  useEffect(() => {
+    if (game?.status === 'completed' && prevGameStatus.current !== 'completed') {
+      if (soundEnabled) {
+        if (game.winnerId === user?.uid) {
+          if (wonAudioRef.current) {
+            wonAudioRef.current.currentTime = 0;
+            wonAudioRef.current.play().catch(console.error);
+          }
+        } else {
+          if (lostAudioRef.current) {
+            lostAudioRef.current.currentTime = 0;
+            lostAudioRef.current.play().catch(console.error);
+          }
+        }
+      }
+    }
+    prevGameStatus.current = game?.status || null;
+  }, [game?.status, game?.winnerId, user?.uid, soundEnabled]);
 
   // Auth Listener
   useEffect(() => {
@@ -263,6 +313,20 @@ export default function App() {
     const isCorrect = index === currentQuestion.answerIndex;
     const quip = isCorrect ? currentQuestion.correctQuip : currentQuestion.wrongAnswerQuips[index];
     
+    if (soundEnabled) {
+      if (isCorrect) {
+        if (correctAudioRef.current) {
+          correctAudioRef.current.currentTime = 0;
+          correctAudioRef.current.play().catch(console.error);
+        }
+      } else {
+        if (wrongAudioRef.current) {
+          wrongAudioRef.current.currentTime = 0;
+          wrongAudioRef.current.play().catch(console.error);
+        }
+      }
+    }
+
     setRoast({ message: quip, isCorrect });
 
     const playerRef = doc(db, 'games', game.id, 'players', user.uid);
@@ -359,8 +423,24 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 space-y-12">
-        <motion.div
+      <>
+        <audio ref={themeAudioRef} src="/theme.mp3" loop />
+        <audio ref={welcomeAudioRef} src="/welcome.mp3" />
+        <audio ref={correctAudioRef} src="/correct.mp3" />
+        <audio ref={wrongAudioRef} src="/wrong.mp3" />
+        <audio ref={wonAudioRef} src="/won.mp3" />
+        <audio ref={lostAudioRef} src="/lost.mp3" />
+
+        <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 space-y-12 relative">
+          <button 
+            onClick={() => setSoundEnabled(!soundEnabled)}
+            className="absolute top-6 right-6 p-4 bg-zinc-900 rounded-full text-white hover:bg-zinc-800 transition-colors shadow-lg z-50"
+            title={soundEnabled ? "Mute Audio" : "Play Audio"}
+          >
+            {soundEnabled ? <Volume2 className="w-6 h-6 text-cyan-400" /> : <VolumeX className="w-6 h-6 text-zinc-500" />}
+          </button>
+
+          <motion.div
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           className="text-center relative"
@@ -390,26 +470,42 @@ export default function App() {
             Fast. Funny. Fair. No BS.
           </p>
         </div>
-      </div>
+        </div>
+      </>
     );
   }
 
   return (
-    <div className="min-h-screen bg-black text-white font-sans selection:bg-pink-500 selection:text-white">
-      {/* Header */}
-      <header className="p-4 flex justify-between items-center border-b border-zinc-900 sticky top-0 bg-black/80 backdrop-blur-md z-40">
-        <div className="flex items-center gap-2 cursor-pointer" onClick={resetGame}>
-          <span className="text-2xl font-black tracking-tighter italic">AFTG</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500 hidden sm:block">
-            {user.displayName}
-          </span>
-          <button onClick={() => auth.signOut()} className="p-2 text-zinc-500 hover:text-white transition-colors">
-            <LogOut className="w-5 h-5" />
-          </button>
-        </div>
-      </header>
+    <>
+      <audio ref={themeAudioRef} src="/theme.mp3" loop />
+      <audio ref={welcomeAudioRef} src="/welcome.mp3" />
+      <audio ref={correctAudioRef} src="/correct.mp3" />
+      <audio ref={wrongAudioRef} src="/wrong.mp3" />
+      <audio ref={wonAudioRef} src="/won.mp3" />
+      <audio ref={lostAudioRef} src="/lost.mp3" />
+
+      <div className="min-h-screen bg-black text-white font-sans selection:bg-pink-500 selection:text-white">
+        {/* Header */}
+        <header className="p-4 flex justify-between items-center border-b border-zinc-900 sticky top-0 bg-black/80 backdrop-blur-md z-40">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={resetGame}>
+            <span className="text-2xl font-black tracking-tighter italic">AFTG</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setSoundEnabled(!soundEnabled)}
+              className="p-2 text-zinc-500 hover:text-white transition-colors"
+              title={soundEnabled ? "Mute Audio" : "Play Audio"}
+            >
+              {soundEnabled ? <Volume2 className="w-5 h-5 text-cyan-400" /> : <VolumeX className="w-5 h-5" />}
+            </button>
+            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500 hidden sm:block">
+              {user.displayName}
+            </span>
+            <button onClick={() => auth.signOut()} className="p-2 text-zinc-500 hover:text-white transition-colors">
+              <LogOut className="w-5 h-5" />
+            </button>
+          </div>
+        </header>
 
       <main className="max-w-2xl mx-auto p-4 pb-24">
         <AnimatePresence mode="wait">
@@ -547,5 +643,6 @@ export default function App() {
         </div>
       )}
     </div>
+    </>
   );
 }
