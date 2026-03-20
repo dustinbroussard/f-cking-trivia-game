@@ -11,12 +11,22 @@ export interface TriviaQuestion {
   used: boolean;
 }
 
+export interface ChatMessage {
+  id: string;
+  uid: string;
+  name: string;
+  text: string;
+  timestamp: any;
+  avatarUrl?: string;
+}
+
 export interface Player {
   uid: string;
   name: string;
   score: number;
   streak: number;
   completedCategories: string[];
+  avatarUrl?: string;
 }
 
 export interface GameState {

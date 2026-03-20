@@ -1,16 +1,56 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { motion } from 'motion/react';
-import { Trophy, Users, Gamepad2, User, Plus } from 'lucide-react';
+import { Trophy, Users, Gamepad2, User, Plus, Upload } from 'lucide-react';
 
 interface GameLobbyProps {
-  onStartSolo: () => void;
-  onStartMulti: () => void;
-  onJoinMulti: (code: string) => void;
+  onStartSolo: (avatarUrl: string) => void;
+  onStartMulti: (avatarUrl: string) => void;
+  onJoinMulti: (code: string, avatarUrl: string) => void;
 }
 
 export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti, onJoinMulti }) => {
   const [joinCode, setJoinCode] = useState('');
   const [showJoinInput, setShowJoinInput] = useState(false);
+  const [selectedAvatar, setSelectedAvatar] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_SIZE = 150;
+        let width = img.width;
+        let height = img.height;
+        
+        if (width > height) {
+          if (width > MAX_SIZE) {
+            height *= MAX_SIZE / width;
+            width = MAX_SIZE;
+          }
+        } else {
+          if (height > MAX_SIZE) {
+            width *= MAX_SIZE / height;
+            height = MAX_SIZE;
+          }
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        
+        // Compress to base64 jpeg
+        setSelectedAvatar(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
 
   return (
     <div className="w-full max-w-md mx-auto space-y-12 p-6 flex flex-col items-center">
@@ -24,6 +64,34 @@ export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti,
             referrerPolicy="no-referrer"
           />
         </div>
+      </div>
+
+      {/* Avatar Selection */}
+      <div className="w-full space-y-4 flex flex-col items-center">
+        <p className="text-center text-[10px] font-black uppercase tracking-widest text-zinc-500">Choose Your Fighter</p>
+        
+        <input 
+          type="file" 
+          accept="image/*" 
+          ref={fileInputRef} 
+          className="hidden" 
+          onChange={handleImageUpload} 
+        />
+        
+        <button 
+          onClick={() => fileInputRef.current?.click()} 
+          className="relative w-24 h-24 rounded-full bg-zinc-900 border-4 border-zinc-800 overflow-hidden flex items-center justify-center hover:border-pink-500 transition-all group shadow-xl"
+        >
+          {selectedAvatar ? (
+            <img src={selectedAvatar} alt="Avatar" className="w-full h-full object-cover" />
+          ) : (
+            <User className="w-10 h-10 text-zinc-600 group-hover:text-pink-500 transition-colors" />
+          )}
+          
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+            <Upload className="w-6 h-6 text-white" />
+          </div>
+        </button>
       </div>
 
       {/* Tagline */}
@@ -47,7 +115,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti,
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            onClick={onStartSolo}
+            onClick={() => onStartSolo(selectedAvatar)}
             className="w-full h-16 bg-gradient-to-r from-cyan-400 to-green-400 rounded-2xl flex items-center justify-center gap-3 text-white font-bold text-xl shadow-lg"
           >
             <Trophy className="w-6 h-6" />
@@ -58,7 +126,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti,
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            onClick={onStartMulti}
+            onClick={() => onStartMulti(selectedAvatar)}
             className="w-full h-16 bg-gradient-to-r from-pink-500 to-purple-600 rounded-2xl flex items-center justify-center gap-3 text-white font-bold text-xl shadow-lg"
           >
             <Gamepad2 className="w-6 h-6" />
@@ -88,7 +156,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti,
                   className="flex-1 bg-zinc-900 border-2 border-zinc-800 rounded-2xl px-4 text-xl font-black text-white text-center focus:outline-none focus:border-pink-500 transition-colors"
                 />
                 <button
-                  onClick={() => joinCode.length === 4 && onJoinMulti(joinCode)}
+                  onClick={() => joinCode.length === 4 && onJoinMulti(joinCode, selectedAvatar)}
                   disabled={joinCode.length !== 4}
                   className="px-6 bg-pink-500 rounded-2xl font-black text-black uppercase disabled:opacity-50"
                 >

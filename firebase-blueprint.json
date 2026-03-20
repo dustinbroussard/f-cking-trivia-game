@@ -26,9 +26,24 @@
         "name": { "type": "string" },
         "score": { "type": "integer" },
         "streak": { "type": "integer" },
-        "completedCategories": { "type": "array", "items": { "type": "string" } }
+        "completedCategories": { "type": "array", "items": { "type": "string" } },
+        "avatarUrl": { "type": "string" }
       },
       "required": ["uid", "name", "score", "streak", "completedCategories"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "A chat message in a game lobby.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "text": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "avatarUrl": { "type": "string" }
+      },
+      "required": ["uid", "name", "text", "timestamp"]
     },
     "Question": {
       "title": "Question",
@@ -59,6 +74,10 @@
     "/games/{gameId}/questions/{questionId}": {
       "schema": "Question",
       "description": "Questions for this game"
+    },
+    "/games/{gameId}/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Chat messages in the game lobby"
     }
   }
 }

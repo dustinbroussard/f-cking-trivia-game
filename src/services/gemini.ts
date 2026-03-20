@@ -62,3 +62,40 @@ export async function generateQuestions(categories: string[], countPerCategory: 
     return [];
   }
 }
+
+export async function generateRoast(
+  category: string,
+  question: string,
+  answer: string,
+  isCorrect: boolean,
+  playerName: string,
+  streak: number,
+  score: number,
+  completedCategories: string[]
+): Promise<string> {
+  const prompt = `You are a smug, sarcastic trivia host (like "You Don't Know Jack"). 
+  Player "${playerName}" just answered a question in the "${category}" category.
+  Question: "${question}"
+  Their answer was: "${answer}"
+  Result: ${isCorrect ? "CORRECT" : "WRONG"}
+  Current Streak: ${streak}
+  Total Score: ${score}
+  Categories they've already completed: ${completedCategories.length > 0 ? completedCategories.join(', ') : 'None yet'}
+
+  Generate a short (1-2 sentence) roast or celebratory quip. 
+  If they were correct, be begrudgingly impressed or smugly supportive. 
+  If they were wrong, be hilariously insulting. Reference their failure, the specific category, their past performance (completed categories), or their pathetic score/streak.
+  Keep it irreverent, highly context-aware, and funny.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+    });
+
+    return response.text || (isCorrect ? "Fine, you got it. Don't let it go to your head." : "Wow, that was impressively stupid.");
+  } catch (error) {
+    console.error("Error generating roast:", error);
+    return isCorrect ? "Correct!" : "Wrong!";
+  }
+}

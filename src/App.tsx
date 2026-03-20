@@ -21,16 +21,17 @@ import {
   deleteDoc
 } from 'firebase/firestore';
 import { auth, db, signIn, handleFirestoreError, OperationType } from './firebase';
-import { GameState, Player, TriviaQuestion, CATEGORIES } from './types';
-import { generateQuestions } from './services/gemini';
+import { GameState, Player, TriviaQuestion, CATEGORIES, ChatMessage } from './types';
+import { generateQuestions, generateRoast } from './services/gemini';
 import { GameLobby } from './components/GameLobby';
 import { Wheel } from './components/Wheel';
 import { QuestionCard } from './components/QuestionCard';
 import { CategoryTracker } from './components/CategoryTracker';
 import { Roast } from './components/Roast';
 import { motion, AnimatePresence } from 'motion/react';
-import { LogOut, RefreshCcw, Trophy, ArrowLeft, Volume2, VolumeX } from 'lucide-react';
+import { LogOut, RefreshCcw, Trophy, ArrowLeft, Volume2, VolumeX, Send, Loader2, History, X } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { orderBy, limit } from 'firebase/firestore';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -41,10 +42,24 @@ export default function App() {
   const [isSpinning, setIsSpinning] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [roast, setRoast] = useState<{ message: string; isCorrect: boolean } | null>(null);
-  const [loading, setLoading] = useState(false);
+  
+  // Granular loading states
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [isStartingGame, setIsStartingGame] = useState(false);
+  const [isJoiningGame, setIsJoiningGame] = useState(false);
+  const [isFetchingQuestions, setIsFetchingQuestions] = useState(false);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  
   const [error, setError] = useState<string | null>(null);
   const [isSolo, setIsSolo] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  
+  const [pastGames, setPastGames] = useState<GameState[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
+  const [correctAnswer, setCorrectAnswer] = useState<number | null>(null);
 
   const themeAudioRef = useRef<HTMLAudioElement>(null);
   const welcomeAudioRef = useRef<HTMLAudioElement>(null);
@@ -53,6 +68,31 @@ export default function App() {
   const wonAudioRef = useRef<HTMLAudioElement>(null);
   const lostAudioRef = useRef<HTMLAudioElement>(null);
   const prevGameStatus = useRef<string | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setIsInitializing(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch past games history
+  useEffect(() => {
+    if (!user) return;
+    const q = query(
+      collection(db, 'games'), 
+      where('playerIds', 'array-contains', user.uid)
+    );
+    const unsub = onSnapshot(q, (snapshot) => {
+      const games = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as GameState));
+      const completed = games
+        .filter(g => g.status === 'completed')
+        .sort((a, b) => (b.lastUpdated?.toMillis() || 0) - (a.lastUpdated?.toMillis() || 0));
+      setPastGames(completed.slice(0, 10));
+    }, (err) => console.error("Error fetching history:", err));
+    return () => unsub();
+  }, [user]);
 
   useEffect(() => {
     if (!user) {
@@ -115,19 +155,27 @@ export default function App() {
     }, (err) => handleFirestoreError(err, OperationType.GET, `games/${game.id}`));
 
     const unsubPlayers = onSnapshot(playersRef, (snapshot) => {
-      const pList = snapshot.docs.map(d => d.data() as Player);
+      const pList = snapshot.docs.map(d => ({ ...d.data(), uid: d.id } as Player));
       setPlayers(pList);
     }, (err) => handleFirestoreError(err, OperationType.LIST, `games/${game.id}/players`));
 
     const unsubQuestions = onSnapshot(questionsRef, (snapshot) => {
-      const qList = snapshot.docs.map(d => d.data() as TriviaQuestion);
+      const qList = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as TriviaQuestion));
       setQuestions(qList);
     }, (err) => handleFirestoreError(err, OperationType.LIST, `games/${game.id}/questions`));
+
+    const messagesRef = collection(db, 'games', game.id, 'messages');
+    const qMessages = query(messagesRef, orderBy('timestamp', 'asc'), limit(50));
+    const unsubMessages = onSnapshot(qMessages, (snapshot) => {
+      const mList = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as ChatMessage));
+      setMessages(mList);
+    }, (err) => handleFirestoreError(err, OperationType.LIST, `games/${game.id}/messages`));
 
     return () => {
       unsubGame();
       unsubPlayers();
       unsubQuestions();
+      unsubMessages();
     };
   }, [game?.id]);
 
@@ -142,12 +190,12 @@ export default function App() {
     }
   };
 
-  const startSoloGame = async () => {
+  const startSoloGame = async (avatarUrl: string) => {
     if (!user) {
       await handleSignIn();
       return;
     }
-    setLoading(true);
+    setIsStartingGame(true);
     setIsSolo(true);
     
     const gameId = `solo-${user.uid}-${Date.now()}`;
@@ -168,32 +216,37 @@ export default function App() {
       name: user.displayName || 'Player 1',
       score: 0,
       streak: 0,
-      completedCategories: []
+      completedCategories: [],
+      avatarUrl
     };
 
     try {
       await setDoc(doc(db, 'games', gameId), newGame);
       await setDoc(doc(db, 'games', gameId, 'players', user.uid), initialPlayer);
       
+      setIsFetchingQuestions(true);
       const initialQuestions = await generateQuestions(CATEGORIES.filter(c => c !== 'Random'));
       for (const q of initialQuestions) {
         await setDoc(doc(db, 'games', gameId, 'questions', q.id), q);
       }
+      setIsFetchingQuestions(false);
       
       setGame(newGame);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `games/${gameId}`);
+      setError("Failed to start game.");
     } finally {
-      setLoading(false);
+      setIsStartingGame(false);
+      setIsFetchingQuestions(false);
     }
   };
 
-  const startMultiplayerGame = async () => {
+  const startMultiplayerGame = async (avatarUrl: string) => {
     if (!user) {
       await handleSignIn();
       return;
     }
-    setLoading(true);
+    setIsStartingGame(true);
     setIsSolo(false);
     
     const code = Math.floor(1000 + Math.random() * 9000).toString();
@@ -216,32 +269,37 @@ export default function App() {
       name: user.displayName || 'Host',
       score: 0,
       streak: 0,
-      completedCategories: []
+      completedCategories: [],
+      avatarUrl
     };
 
     try {
       await setDoc(doc(db, 'games', gameId), newGame);
       await setDoc(doc(db, 'games', gameId, 'players', user.uid), initialPlayer);
       
+      setIsFetchingQuestions(true);
       const initialQuestions = await generateQuestions(CATEGORIES.filter(c => c !== 'Random'));
       for (const q of initialQuestions) {
         await setDoc(doc(db, 'games', gameId, 'questions', q.id), q);
       }
+      setIsFetchingQuestions(false);
       
       setGame(newGame);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `games/${gameId}`);
+      setError("Failed to start multiplayer game.");
     } finally {
-      setLoading(false);
+      setIsStartingGame(false);
+      setIsFetchingQuestions(false);
     }
   };
 
-  const joinGame = async (code: string) => {
+  const joinGame = async (code: string, avatarUrl: string) => {
     if (!user) {
       await handleSignIn();
       return;
     }
-    setLoading(true);
+    setIsJoiningGame(true);
     
     try {
       const q = query(collection(db, 'games'), where('code', '==', code), where('status', '==', 'waiting'));
@@ -266,7 +324,8 @@ export default function App() {
         name: user.displayName || 'Guest',
         score: 0,
         streak: 0,
-        completedCategories: []
+        completedCategories: [],
+        avatarUrl
       });
 
       await updateDoc(doc(db, 'games', gameDoc.id), {
@@ -278,8 +337,9 @@ export default function App() {
       setGame({ id: gameDoc.id, ...gameData } as GameState);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `games/join`);
+      setError("Failed to join game.");
     } finally {
-      setLoading(false);
+      setIsJoiningGame(false);
     }
   };
 
@@ -294,15 +354,17 @@ export default function App() {
       setCurrentQuestion(q);
     } else {
       // Fetch more questions if needed
-      setLoading(true);
+      setIsFetchingQuestions(true);
       generateQuestions([category === 'Random' ? 'General' : category]).then(newQs => {
         if (newQs.length > 0) {
           const q = newQs[0];
           setCurrentQuestion(q);
           // Save new questions to DB
           newQs.forEach(nq => setDoc(doc(db, 'games', game!.id, 'questions', nq.id), nq));
+        } else {
+          setError("Failed to load questions. Please try again.");
         }
-        setLoading(false);
+        setIsFetchingQuestions(false);
       });
     }
   };
@@ -310,8 +372,9 @@ export default function App() {
   const handleAnswer = async (index: number) => {
     if (!currentQuestion || !game || !user) return;
 
+    setSelectedAnswer(index);
+    setCorrectAnswer(currentQuestion.answerIndex);
     const isCorrect = index === currentQuestion.answerIndex;
-    const quip = isCorrect ? currentQuestion.correctQuip : currentQuestion.wrongAnswerQuips[index];
     
     if (soundEnabled) {
       if (isCorrect) {
@@ -327,10 +390,22 @@ export default function App() {
       }
     }
 
-    setRoast({ message: quip, isCorrect });
-
     const playerRef = doc(db, 'games', game.id, 'players', user.uid);
     const currentPlayer = players.find(p => p.uid === user.uid);
+
+    // Generate context-aware roast
+    const roastMessage = await generateRoast(
+      currentQuestion.category,
+      currentQuestion.question,
+      currentQuestion.choices[index],
+      isCorrect,
+      currentPlayer?.name || 'Player',
+      currentPlayer?.streak || 0,
+      currentPlayer?.score || 0,
+      currentPlayer?.completedCategories || []
+    );
+
+    setRoast({ message: roastMessage, isCorrect });
 
     try {
       if (isCorrect) {
@@ -377,6 +452,8 @@ export default function App() {
     setRoast(null);
     setCurrentQuestion(null);
     setSelectedCategory(null);
+    setSelectedAnswer(null);
+    setCorrectAnswer(null);
   };
 
   const resetGame = () => {
@@ -390,7 +467,7 @@ export default function App() {
 
   const playAgain = async () => {
     if (!game || !user || game.hostId !== user.uid) return;
-    setLoading(true);
+    setIsStartingGame(true);
     try {
       // Reset players
       for (const p of players) {
@@ -402,10 +479,12 @@ export default function App() {
       }
 
       // Generate new questions
+      setIsFetchingQuestions(true);
       const initialQuestions = await generateQuestions(CATEGORIES.filter(c => c !== 'Random'));
       for (const q of initialQuestions) {
         await setDoc(doc(db, 'games', game.id, 'questions', q.id), q);
       }
+      setIsFetchingQuestions(false);
 
       // Reset game state
       await updateDoc(doc(db, 'games', game.id), {
@@ -416,8 +495,45 @@ export default function App() {
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `games/${game.id}`);
+      setError("Failed to restart game.");
     } finally {
-      setLoading(false);
+      setIsStartingGame(false);
+      setIsFetchingQuestions(false);
+    }
+  };
+
+  const sendMessage = async () => {
+    if (!game || !user || !chatInput.trim() || isSendingMessage) return;
+    setIsSendingMessage(true);
+    const currentPlayer = players.find(p => p.uid === user.uid);
+    const messageRef = collection(db, 'games', game.id, 'messages');
+    
+    try {
+      await setDoc(doc(messageRef), {
+        uid: user.uid,
+        name: currentPlayer?.name || 'Player',
+        text: chatInput.trim(),
+        timestamp: serverTimestamp(),
+        avatarUrl: currentPlayer?.avatarUrl
+      });
+      setChatInput('');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `games/${game.id}/messages`);
+      setError("Failed to send message.");
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
+
+  const startGame = async () => {
+    if (!game || game.hostId !== user?.uid) return;
+    try {
+      await updateDoc(doc(db, 'games', game.id), {
+        status: 'active',
+        lastUpdated: serverTimestamp()
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `games/${game.id}`);
     }
   };
 
@@ -431,7 +547,7 @@ export default function App() {
         <audio ref={wonAudioRef} src="/won.mp3" />
         <audio ref={lostAudioRef} src="/lost.mp3" />
 
-        <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 space-y-12 relative">
+        <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-6 space-y-12 relative">
           <button 
             onClick={() => setSoundEnabled(!soundEnabled)}
             className="absolute top-6 right-6 p-4 bg-zinc-900 rounded-full text-white hover:bg-zinc-800 transition-colors shadow-lg z-50"
@@ -484,65 +600,150 @@ export default function App() {
       <audio ref={wonAudioRef} src="/won.mp3" />
       <audio ref={lostAudioRef} src="/lost.mp3" />
 
-      <div className="min-h-screen bg-black text-white font-sans selection:bg-pink-500 selection:text-white">
+      <div className="min-h-screen bg-zinc-950 text-zinc-50 font-sans selection:bg-pink-500/30">
         {/* Header */}
-        <header className="p-4 flex justify-between items-center border-b border-zinc-900 sticky top-0 bg-black/80 backdrop-blur-md z-40">
-          <div className="flex items-center gap-2 cursor-pointer" onClick={resetGame}>
-            <span className="text-2xl font-black tracking-tighter italic">AFTG</span>
-          </div>
+        <header className="p-4 flex justify-between items-center bg-zinc-900/50 backdrop-blur-md border-b border-white/5 sticky top-0 z-40">
           <div className="flex items-center gap-4">
+            <h1 className="text-xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-cyan-400 uppercase cursor-pointer" onClick={resetGame}>
+              AFTG
+            </h1>
             <button 
               onClick={() => setSoundEnabled(!soundEnabled)}
-              className="p-2 text-zinc-500 hover:text-white transition-colors"
-              title={soundEnabled ? "Mute Audio" : "Play Audio"}
+              className="p-2 text-zinc-400 hover:text-white transition-colors rounded-full hover:bg-white/5"
             >
-              {soundEnabled ? <Volume2 className="w-5 h-5 text-cyan-400" /> : <VolumeX className="w-5 h-5" />}
+              {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
             </button>
-            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500 hidden sm:block">
-              {user.displayName}
-            </span>
-            <button onClick={() => auth.signOut()} className="p-2 text-zinc-500 hover:text-white transition-colors">
-              <LogOut className="w-5 h-5" />
-            </button>
+          </div>
+          <div className="flex items-center gap-4">
+            {!game && (
+              <button 
+                onClick={() => setShowHistory(true)}
+                className="p-2 text-zinc-400 hover:text-white transition-colors rounded-full hover:bg-white/5"
+                title="Match History"
+              >
+                <History className="w-5 h-5" />
+              </button>
+            )}
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-widest text-zinc-400 hidden sm:block">
+                {user.displayName}
+              </span>
+              <button onClick={() => auth.signOut()} className="p-2 text-zinc-400 hover:text-white transition-colors rounded-full hover:bg-white/5">
+                <LogOut className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         </header>
 
-      <main className="max-w-2xl mx-auto p-4 pb-24">
-        <AnimatePresence mode="wait">
+      <main className="max-w-3xl mx-auto p-4 pb-24">
+        <AnimatePresence>
           {error && (
             <motion.div
+              key="error-banner"
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
-              className="mb-4 p-4 bg-rose-500/10 border border-rose-500/50 rounded-2xl text-rose-500 text-xs font-bold text-center"
+              className="mb-6 p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl flex items-center justify-between shadow-lg shadow-rose-500/5"
             >
-              {error}
-              <button onClick={() => setError(null)} className="ml-2 underline">Dismiss</button>
+              <span className="text-rose-400 text-sm font-medium">{error}</span>
+              <button onClick={() => setError(null)} className="p-1 hover:bg-rose-500/20 rounded-lg transition-colors text-rose-400">
+                <X className="w-4 h-4" />
+              </button>
             </motion.div>
           )}
+        </AnimatePresence>
 
-          {!game ? (
-            <GameLobby 
-              onStartSolo={startSoloGame} 
-              onStartMulti={startMultiplayerGame} 
-              onJoinMulti={joinGame} 
-            />
-          ) : (
+        {/* History Modal */}
+        <AnimatePresence>
+          {showHistory && (
             <motion.div
+              key="history-modal"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            >
+                <motion.div 
+                  initial={{ scale: 0.95, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.95, opacity: 0 }}
+                  className="bg-zinc-900 border border-white/10 rounded-3xl p-6 w-full max-w-lg shadow-2xl max-h-[80vh] flex flex-col"
+                >
+                  <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-2xl font-black uppercase tracking-tight text-white">Match History</h2>
+                    <button onClick={() => setShowHistory(false)} className="p-2 text-zinc-400 hover:text-white rounded-full hover:bg-white/5 transition-colors">
+                      <X className="w-6 h-6" />
+                    </button>
+                  </div>
+                  
+                  <div className="overflow-y-auto custom-scrollbar flex-1 pr-2 space-y-3">
+                    {pastGames.length === 0 ? (
+                      <p className="text-zinc-500 text-center py-8">No completed games yet.</p>
+                    ) : (
+                      pastGames.map(g => (
+                        <div key={g.id} className="bg-zinc-800/50 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
+                          <div>
+                            <p className="text-xs text-zinc-400 font-medium mb-1">
+                              {g.lastUpdated ? new Date(g.lastUpdated.toMillis()).toLocaleDateString() : 'Unknown Date'}
+                            </p>
+                            <p className="text-sm font-bold text-white">
+                              {g.code === 'SOLO' ? 'Solo Game' : 'Multiplayer'}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            {g.winnerId === user.uid ? (
+                              <span className="inline-flex items-center gap-1 text-emerald-400 font-black text-sm uppercase tracking-wider">
+                                <Trophy className="w-4 h-4" /> Won
+                              </span>
+                            ) : (
+                              <span className="text-zinc-500 font-bold text-sm uppercase tracking-wider">
+                                Lost
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence mode="wait">
+            {!game ? (
+              <div key="lobby-view" className="relative">
+              {(isStartingGame || isJoiningGame) && (
+                <div className="absolute inset-0 z-10 bg-zinc-950/80 backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center">
+                  <Loader2 className="w-8 h-8 text-pink-500 animate-spin mb-4" />
+                  <p className="text-sm font-medium text-zinc-300">
+                    {isFetchingQuestions ? "Generating sarcastic questions..." : "Setting up game..."}
+                  </p>
+                </div>
+              )}
+              <GameLobby 
+                onStartSolo={startSoloGame} 
+                onStartMulti={startMultiplayerGame} 
+                onJoinMulti={joinGame} 
+              />
+            </div>
+          ) : (
+            <motion.div
+              key="game-view"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
               className="space-y-8"
             >
               {/* Game Info */}
-              <div className="flex justify-between items-end">
-                <button onClick={resetGame} className="flex items-center gap-2 text-zinc-500 hover:text-white transition-colors">
+              <div className="flex justify-between items-end bg-zinc-900/50 p-4 rounded-2xl border border-white/5">
+                <button onClick={resetGame} className="flex items-center gap-2 text-zinc-400 hover:text-white transition-colors px-3 py-2 rounded-xl hover:bg-white/5">
                   <ArrowLeft className="w-4 h-4" />
                   <span className="text-[10px] font-black uppercase tracking-widest">Quit</span>
                 </button>
                 {game.status === 'waiting' && (
-                  <div className="text-right">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Join Code</p>
-                    <p className="text-4xl font-black text-pink-500 tracking-tighter">{game.code}</p>
+                  <div className="text-right px-4">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">Join Code</p>
+                    <p className="text-4xl font-black text-pink-500 tracking-tighter leading-none">{game.code}</p>
                   </div>
                 )}
               </div>
@@ -553,6 +754,7 @@ export default function App() {
                   <CategoryTracker 
                     key={p.uid} 
                     playerName={p.name} 
+                    avatarUrl={p.avatarUrl}
                     completed={p.completedCategories} 
                     isCurrentTurn={game.currentTurn === p.uid}
                     score={p.score}
@@ -560,62 +762,124 @@ export default function App() {
                 ))}
               </div>
 
+              {/* Chat in Waiting Room */}
+              {game.status === 'waiting' && (
+                <div className="bg-zinc-900/80 backdrop-blur-md border border-white/10 rounded-3xl p-6 space-y-4 shadow-xl">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold uppercase tracking-widest text-zinc-400">Lobby Chat</h3>
+                    {game.hostId === user.uid && players.length >= 2 && (
+                      <button 
+                        onClick={startGame}
+                        className="px-5 py-2.5 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-full text-xs font-bold uppercase tracking-widest hover:scale-105 transition-transform shadow-lg shadow-pink-500/20"
+                      >
+                        Start Game
+                      </button>
+                    )}
+                  </div>
+                  
+                  <div className="h-64 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+                    {messages.length === 0 ? (
+                      <p className="text-center text-zinc-500 italic text-sm py-12">No messages yet. Say something funny.</p>
+                    ) : (
+                      messages.map(m => (
+                        <div key={m.id} className={`flex gap-3 ${m.uid === user.uid ? 'flex-row-reverse' : ''}`}>
+                          <div className="w-10 h-10 bg-zinc-800 rounded-full flex items-center justify-center text-sm shrink-0 overflow-hidden shadow-inner border border-white/5">
+                            {m.avatarUrl ? <img src={m.avatarUrl} alt="Avatar" className="w-full h-full object-cover" /> : '👤'}
+                          </div>
+                          <div className={`max-w-[75%] p-4 rounded-2xl text-sm shadow-md ${
+                            m.uid === user.uid 
+                              ? 'bg-purple-600 text-white rounded-tr-sm' 
+                              : 'bg-zinc-800 text-zinc-200 rounded-tl-sm border border-white/5'
+                          }`}>
+                            <p className="text-[10px] font-bold opacity-60 mb-1 uppercase tracking-wider">{m.name}</p>
+                            <p className="leading-relaxed">{m.text}</p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                    <input 
+                      type="text"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                      placeholder="Type a message..."
+                      disabled={isSendingMessage}
+                      className="flex-1 bg-zinc-950 border border-white/10 rounded-2xl px-5 py-3 text-sm focus:outline-none focus:border-purple-500 transition-colors disabled:opacity-50"
+                    />
+                    <button 
+                      onClick={sendMessage}
+                      disabled={isSendingMessage || !chatInput.trim()}
+                      className="p-3 bg-purple-600 rounded-2xl hover:bg-purple-500 transition-colors disabled:opacity-50 flex items-center justify-center shadow-lg shadow-purple-500/20"
+                    >
+                      {isSendingMessage ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Game Content */}
               <div className="relative py-12">
                 {game.status === 'completed' ? (
-                  <div className="text-center space-y-6 py-12">
-                    <Trophy className="w-24 h-24 text-yellow-500 mx-auto animate-bounce" />
-                    <h2 className="text-5xl font-black uppercase italic leading-none">
-                      {players.find(p => p.uid === game.winnerId)?.name} WINS!
-                    </h2>
-                    <p className="text-zinc-500 font-bold uppercase tracking-widest">Total Domination.</p>
+                  <motion.div 
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="text-center space-y-8 bg-zinc-900/80 backdrop-blur-md border border-white/10 p-10 rounded-3xl shadow-2xl"
+                  >
+                    <Trophy className="w-24 h-24 mx-auto text-yellow-400 drop-shadow-[0_0_30px_rgba(250,204,21,0.3)] animate-bounce" />
+                    <div>
+                      <h2 className="text-4xl font-black text-white uppercase tracking-tight mb-2">Game Over</h2>
+                      <p className="text-xl text-zinc-400">
+                        {game.winnerId === user.uid ? "You actually won. Incredible." : "You lost. Shocker."}
+                      </p>
+                    </div>
                     {game.hostId === user.uid ? (
-                      <button 
+                      <button
                         onClick={playAgain}
-                        disabled={loading}
-                        className="px-8 py-4 bg-white text-black rounded-full font-black uppercase tracking-widest"
+                        disabled={isStartingGame}
+                        className="mx-auto flex items-center justify-center gap-3 px-8 py-4 bg-white text-black rounded-2xl font-bold text-lg hover:scale-105 transition-transform shadow-xl disabled:opacity-50"
                       >
-                        {loading ? 'Loading...' : 'Play Again'}
+                        {isStartingGame ? <Loader2 className="w-6 h-6 animate-spin" /> : <RefreshCcw className="w-6 h-6" />}
+                        Play Again
                       </button>
                     ) : (
                       <p className="text-zinc-500 font-bold uppercase tracking-widest">Waiting for host to play again...</p>
                     )}
-                    <button 
-                      onClick={resetGame}
-                      className="px-8 py-4 bg-transparent border-2 border-zinc-800 text-white rounded-full font-black uppercase tracking-widest mt-4 block mx-auto"
-                    >
-                      Leave Game
-                    </button>
-                  </div>
+                  </motion.div>
                 ) : game.currentTurn === user.uid ? (
                   <div className="space-y-8">
                     {!currentQuestion ? (
-                      <div className="text-center space-y-8">
-                        <h2 className="text-3xl font-black uppercase italic">Spin for Category</h2>
+                      <div className="flex flex-col items-center gap-8">
+                        <p className="text-sm font-bold uppercase tracking-widest text-cyan-400 animate-pulse">Your Turn</p>
                         <Wheel 
-                          isSpinning={isSpinning} 
                           onSpinComplete={handleSpinComplete} 
+                          isSpinning={isSpinning}
+                          setIsSpinning={setIsSpinning}
+                          soundEnabled={soundEnabled}
                         />
-                        <button
-                          disabled={isSpinning || loading}
-                          onClick={() => setIsSpinning(true)}
-                          className="px-12 py-6 bg-gradient-to-r from-cyan-400 via-pink-500 to-yellow-400 text-white rounded-full text-2xl font-black uppercase tracking-widest disabled:opacity-50 shadow-[0_0_40px_rgba(255,255,255,0.1)] hover:scale-105 transition-transform"
-                        >
-                          {loading ? 'Loading...' : 'SPIN IT!'}
-                        </button>
+                        {isFetchingQuestions && (
+                          <div className="flex items-center gap-2 text-zinc-400 text-sm">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Generating questions...
+                          </div>
+                        )}
                       </div>
                     ) : (
-                      <QuestionCard 
-                        question={currentQuestion} 
+                      <QuestionCard
+                        question={currentQuestion}
                         onSelect={handleAnswer}
                         disabled={!!roast}
+                        selectedId={selectedAnswer}
+                        correctId={correctAnswer}
                       />
                     )}
                   </div>
                 ) : (
-                  <div className="text-center py-24 space-y-4">
-                    <RefreshCcw className="w-12 h-12 text-zinc-800 mx-auto animate-spin" />
-                    <p className="text-zinc-500 font-black uppercase tracking-widest text-sm">Waiting for opponent...</p>
+                  <div className="text-center p-12 bg-zinc-900/50 border border-white/5 rounded-3xl">
+                    <Loader2 className="w-8 h-8 text-pink-500 animate-spin mx-auto mb-4" />
+                    <p className="text-lg font-medium text-zinc-400">Waiting for {players.find(p => p.uid === game.currentTurn)?.name} to spin...</p>
                   </div>
                 )}
               </div>
@@ -631,16 +895,6 @@ export default function App() {
           isCorrect={roast.isCorrect} 
           onClose={nextTurn} 
         />
-      )}
-
-      {/* Loading Overlay */}
-      {loading && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center">
-          <div className="text-center space-y-4">
-            <div className="w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-[10px] font-black uppercase tracking-widest text-white">Summoning trivia gods...</p>
-          </div>
-        </div>
       )}
     </div>
     </>

@@ -27,6 +27,11 @@ service cloud.firestore {
       match /questions/{questionId} {
         allow read, write: if isAuthenticated();
       }
+      
+      match /messages/{messageId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid;
+      }
     }
   }
 }
