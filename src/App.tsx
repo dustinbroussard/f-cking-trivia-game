@@ -576,7 +576,7 @@ export default function App() {
           <div className="relative inline-block w-64 h-64 md:w-80 md:h-80">
             <img 
               src={logoSrc} 
-              alt="AFTG: A F-ing Trivia Game" 
+              alt="A F-cking Trivia Game" 
               className="w-full h-full object-contain drop-shadow-[0_0_30px_rgba(255,255,255,0.1)]"
               referrerPolicy="no-referrer"
             />
@@ -618,8 +618,8 @@ export default function App() {
         {/* Header */}
         <header className="p-4 flex justify-between items-center bg-zinc-900/50 backdrop-blur-md border-b border-white/5 sticky top-0 z-40">
           <div className="flex items-center gap-4">
-            <h1 className="text-xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-cyan-400 uppercase cursor-pointer" onClick={resetGame}>
-              AFTG
+            <h1 className="text-sm sm:text-xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-cyan-400 uppercase cursor-pointer leading-tight" onClick={resetGame}>
+              A F-cking Trivia Game
             </h1>
             <button 
               onClick={() => setSoundEnabled(!soundEnabled)}

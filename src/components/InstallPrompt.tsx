@@ -78,7 +78,7 @@ export function InstallPrompt() {
                 <img src={logoSrc} alt="AFTG Logo" className="w-full h-full object-contain" />
               </div>
               <div>
-                <h3 className="text-white font-bold text-sm tracking-wide">Install AFTG</h3>
+                <h3 className="text-white font-bold text-sm tracking-wide">Install A F-cking Trivia Game</h3>
                 <p className="text-zinc-400 text-xs mt-0.5">Play faster, offline, and full-screen.</p>
               </div>
             </div>
