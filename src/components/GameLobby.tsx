@@ -61,7 +61,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti,
         <div className="relative inline-block w-64 h-64 md:w-80 md:h-80">
           <img 
             src={logoSrc} 
-            alt="AFTG: A F-ing Trivia Game" 
+            alt="A F-cking Trivia Game" 
             className="w-full h-full object-contain drop-shadow-[0_0_30px_rgba(255,255,255,0.1)]"
             referrerPolicy="no-referrer"
           />
@@ -99,7 +99,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti,
       {/* Tagline */}
       <div className="text-center space-y-2">
         <h3 className="text-xl font-black text-cyan-400 uppercase tracking-tight">
-          A F-ING TRIVIA GAME
+          A F-CKING TRIVIA GAME
         </h3>
         <p className="text-zinc-400 font-medium text-lg">
           Fast. Funny. Fair. No BS. 🎯
