@@ -33,5 +33,13 @@ service cloud.firestore {
         allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid;
       }
     }
+
+    match /questionBank/{questionId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /users/{userId}/private/{docId} {
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    }
   }
 }

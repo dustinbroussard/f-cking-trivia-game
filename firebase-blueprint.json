@@ -47,22 +47,51 @@
     },
     "Question": {
       "title": "Question",
-      "description": "A trivia question generated for a game.",
+      "description": "A trivia question that can be reused globally or assigned to a game.",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "questionId": { "type": "string", "description": "Reference to the canonical bank question" },
         "category": { "type": "string" },
+        "difficulty": { "type": "string", "enum": ["easy", "medium", "hard"] },
         "question": { "type": "string" },
         "choices": { "type": "array", "items": { "type": "string" } },
+        "correctIndex": { "type": "integer" },
         "answerIndex": { "type": "integer" },
+        "explanation": { "type": "string" },
+        "validationStatus": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "integer" },
+        "usedCount": { "type": "integer" },
         "correctQuip": { "type": "string" },
         "wrongAnswerQuips": { "type": "object" },
         "used": { "type": "boolean" }
       },
-      "required": ["category", "question", "choices", "answerIndex", "correctQuip", "wrongAnswerQuips", "used"]
+      "required": ["category", "difficulty", "question", "choices", "correctIndex", "answerIndex", "explanation", "validationStatus", "createdAt", "usedCount", "correctQuip", "wrongAnswerQuips", "used"]
+    },
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "Persisted user preferences for theme, audio, and commentary.",
+      "type": "object",
+      "properties": {
+        "themeMode": { "type": "string", "enum": ["dark", "light"] },
+        "soundEnabled": { "type": "boolean" },
+        "musicEnabled": { "type": "boolean" },
+        "sfxEnabled": { "type": "boolean" },
+        "commentaryEnabled": { "type": "boolean" },
+        "updatedAt": { "type": "integer" }
+      },
+      "required": ["themeMode", "soundEnabled", "musicEnabled", "sfxEnabled", "commentaryEnabled", "updatedAt"]
     }
   },
   "firestore": {
+    "/users/{uid}/private/settings": {
+      "schema": "UserSettings",
+      "description": "Private per-user settings synced across devices"
+    },
+    "/questionBank/{questionId}": {
+      "schema": "Question",
+      "description": "Canonical reusable global trivia questions"
+    },
     "/games/{gameId}": {
       "schema": "Game",
       "description": "Main game document"

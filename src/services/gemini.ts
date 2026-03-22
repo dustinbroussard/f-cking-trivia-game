@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { TriviaQuestion } from "../types";
+import { getGenerationCategoryProfile } from "./categorySubdomains";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
@@ -12,24 +13,16 @@ const questionSchema = {
         type: Type.OBJECT,
         properties: {
           category: { type: Type.STRING },
+          difficulty: { type: Type.STRING },
           question: { type: Type.STRING },
           choices: {
             type: Type.ARRAY,
             items: { type: Type.STRING }
           },
-          answerIndex: { type: Type.INTEGER },
-          correctQuip: { type: Type.STRING },
-          wrongAnswerQuips: {
-            type: Type.OBJECT,
-            properties: {
-              "0": { type: Type.STRING },
-              "1": { type: Type.STRING },
-              "2": { type: Type.STRING },
-              "3": { type: Type.STRING }
-            }
-          }
+          correctIndex: { type: Type.INTEGER },
+          explanation: { type: Type.STRING }
         },
-        required: ["category", "question", "choices", "answerIndex", "correctQuip", "wrongAnswerQuips"]
+        required: ["category", "difficulty", "question", "choices", "correctIndex", "explanation"]
       }
     }
   }
@@ -57,11 +50,56 @@ const QUESTION_STYLES = [
 ];
 
 const DIFFICULTY_SHAPES = [
-  'lean slightly mainstream',
-  'lean slightly niche',
-  'mix one obvious anchor with less obvious context',
-  'favor answers that require recognition over pure recall',
+  'easy',
+  'medium',
+  'hard',
 ];
+
+function shuffle<T>(items: T[]) {
+  const copy = [...items];
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [copy[index], copy[swapIndex]] = [copy[swapIndex], copy[index]];
+  }
+  return copy;
+}
+
+function buildSubdomainInstructions(categories: string[], requestedCount: number) {
+  const profiles = categories.map((category) => {
+    const profile = getGenerationCategoryProfile(category);
+    const shuffled = shuffle(profile.subdomains);
+    const featured = shuffled.slice(0, Math.min(2, shuffled.length));
+    const rotation = shuffled.slice(0, Math.min(requestedCount, shuffled.length));
+
+    return {
+      category,
+      promptCategory: profile.promptCategory,
+      featured,
+      rotation,
+    };
+  });
+
+  if (import.meta.env.DEV) {
+    profiles.forEach((profile) => {
+      console.warn(
+        `[questionGeneration] ${profile.category} subdomains: ${profile.featured.join(', ') || 'none'}`
+      );
+    });
+  }
+
+  return profiles.map((profile) => {
+    const featuredText = profile.featured.length > 0
+      ? `Focus on subdomains such as: ${profile.featured.join(', ')}.`
+      : 'Use a varied spread of subtopics.';
+    const rotationText = profile.rotation.length > 1
+      ? `Across the batch, vary focus across these subdomains instead of repeating one: ${profile.rotation.join(', ')}.`
+      : '';
+
+    return `- Category "${profile.category}" maps to the knowledge area "${profile.promptCategory}".
+  ${featuredText}
+  ${rotationText}`.trim();
+  }).join('\n');
+}
 
 function normalizeText(value: string) {
   return value
@@ -107,8 +145,10 @@ function isTooSimilar(candidate: ExistingQuestion, existing: ExistingQuestion) {
 
 function isValidQuestionShape(question: any) {
   if (!question || typeof question.question !== 'string' || typeof question.category !== 'string') return false;
+  if (!['easy', 'medium', 'hard'].includes(question.difficulty)) return false;
   if (!Array.isArray(question.choices) || question.choices.length !== 4) return false;
-  if (!Number.isInteger(question.answerIndex) || question.answerIndex < 0 || question.answerIndex > 3) return false;
+  if (!Number.isInteger(question.correctIndex) || question.correctIndex < 0 || question.correctIndex > 3) return false;
+  if (typeof question.explanation !== 'string' || !question.explanation.trim()) return false;
 
   const normalizedChoices = question.choices.map((choice: string) => normalizeText(choice));
   if (normalizedChoices.some((choice: string) => !choice)) return false;
@@ -117,48 +157,70 @@ function isValidQuestionShape(question: any) {
   return true;
 }
 
-function buildQuestionPrompt(categories: string[], countPerCategory: number, existingQuestions: ExistingQuestion[]) {
-  const seed = Math.random().toString(36).slice(2, 10);
-  const lens = QUESTION_LENSES[Math.floor(Math.random() * QUESTION_LENSES.length)];
+function buildQuestionPrompt(
+  categories: string[],
+  countPerCategory: number,
+  existingQuestions: ExistingQuestion[],
+  requestedDifficulty?: 'easy' | 'medium' | 'hard'
+) {
   const style = QUESTION_STYLES[Math.floor(Math.random() * QUESTION_STYLES.length)];
-  const difficultyShape = DIFFICULTY_SHAPES[Math.floor(Math.random() * DIFFICULTY_SHAPES.length)];
-  const recentQuestionsByCategory = categories
-    .map(category => {
-      const recent = existingQuestions
-        .filter(item => item.category === category)
-        .slice(-8)
-        .map(item => `- ${item.question}`);
-
-      return recent.length > 0
-        ? `${category} recent questions to avoid:\n${recent.join('\n')}`
-        : `${category} recent questions to avoid:\n- None recorded`;
-    })
-    .join('\n\n');
-
+  const lens = QUESTION_LENSES[Math.floor(Math.random() * QUESTION_LENSES.length)];
+  const difficulty = requestedDifficulty || DIFFICULTY_SHAPES[Math.floor(Math.random() * DIFFICULTY_SHAPES.length)];
   const requestedCount = countPerCategory + 2;
+  const subdomainInstructions = buildSubdomainInstructions(categories, requestedCount);
+  const avoidedQuestions = existingQuestions
+    .filter(item => categories.includes(item.category))
+    .slice(-12)
+    .map(item => `- [${item.category}] ${item.question}`)
+    .join('\n');
 
-  return `Generate ${requestedCount} multiple choice trivia questions for these categories: ${categories.join(", ")}.
+  return `You are generating high-quality trivia questions.
 
-Return questions that feel fresh, varied, and unpredictable.
-Variation seed for this batch: ${seed}
-Creative steering for this batch:
-- Emphasize ${lens}.
-- Use ${style}.
-- Difficulty shape: ${difficultyShape}.
+Return ONLY valid JSON.
+Do not include commentary.
+Do not include markdown.
+Do not include explanations outside the JSON.
 
-Hard constraints:
+Return this exact top-level shape:
+{
+  "questions": [
+    {
+      "category": string,
+      "difficulty": "easy" | "medium" | "hard",
+      "question": string,
+      "choices": [string, string, string, string],
+      "correctIndex": number,
+      "explanation": string
+    }
+  ]
+}
+
+Rules:
+- Exactly ${requestedCount} questions total.
+- Categories allowed for this batch: ${categories.join(', ')}.
+- Use only the category names exactly as listed.
+- Target difficulty for this batch: ${difficulty}.
+- Difficulty guidelines:
+  easy = common knowledge, widely known facts
+  medium = requires general education or familiarity
+  hard = challenging but fair, not obscure trivia
+- Exactly 4 answer choices per question.
+- Exactly 1 correct answer per question.
+- No duplicate answers.
+- No trick questions.
+- No ambiguous wording.
+- No "all of the above" or "none of the above".
+- Keep explanations to 1-2 sentences.
+- Keep questions concise and clear.
+- Make wrong answers plausible but clearly incorrect.
+- Prefer ${style}.
+- Favor ${lens}.
+- Use the following category focus guidance:
+${subdomainInstructions}
 - Do not repeat or closely paraphrase any avoided question.
-- Avoid the most obvious trivia chestnuts, meme facts, and overused beginner prompts.
-- Spread questions across different subtopics, eras, people, places, and formats.
-- Vary the question style: some direct, some scenario-based, some clue-driven, some comparative.
-- Keep difficulty in the fun middle: surprising but still answerable.
-- Exactly 4 distinct answer choices per question.
-- Wrong choices must be plausible enough to create tension, not joke throwaways.
-- Provide a smug/celebratory quip for the correct answer and a unique sarcastic roast for each wrong answer.
-- Tone: irreverent, sarcastic, funny, like "You Don't Know Jack".
 
-Avoided recent questions:
-${recentQuestionsByCategory}`;
+Avoided questions:
+${avoidedQuestions || '- None recorded'}`;
 }
 
 function dedupeQuestions(
@@ -189,6 +251,21 @@ function dedupeQuestions(
     accepted.push({
       ...question,
       id: '',
+      questionId: '',
+      difficulty: question.difficulty || 'medium',
+      correctIndex: question.correctIndex,
+      answerIndex: question.correctIndex,
+      explanation: question.explanation || '',
+      validationStatus: 'approved',
+      createdAt: Date.now(),
+      usedCount: 0,
+      correctQuip: '',
+      wrongAnswerQuips: {
+        0: '',
+        1: '',
+        2: '',
+        3: '',
+      },
       used: false,
     });
   }
@@ -206,20 +283,26 @@ async function requestQuestions(prompt: string) {
     }
   });
 
-  return JSON.parse(response.text || '{"questions": []}');
+  const text = response.text || '';
+  if (!text.trim().startsWith('{') || !text.trim().endsWith('}')) {
+    throw new Error('Generator returned non-JSON content');
+  }
+
+  return JSON.parse(text);
 }
 
 export async function generateQuestions(
   categories: string[],
   countPerCategory: number = 3,
-  existingQuestions: ExistingQuestion[] = []
+  existingQuestions: ExistingQuestion[] = [],
+  requestedDifficulty?: 'easy' | 'medium' | 'hard'
 ): Promise<TriviaQuestion[]> {
   let accepted: TriviaQuestion[] = [];
   let avoidanceList = [...existingQuestions];
 
   try {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const prompt = buildQuestionPrompt(categories, countPerCategory, avoidanceList);
+      const prompt = buildQuestionPrompt(categories, countPerCategory, avoidanceList, requestedDifficulty);
       const data = await requestQuestions(prompt);
       const deduped = dedupeQuestions(data.questions || [], avoidanceList, countPerCategory);
 
@@ -239,11 +322,15 @@ export async function generateQuestions(
       if (hasEnough) break;
     }
 
-    return accepted.map((q, index) => ({
-      ...q,
-      id: `${Date.now()}-${index}`,
-      used: false
-    }));
+    return accepted.map((q, index) => {
+      const generatedId = `${Date.now()}-${index}`;
+      return {
+        ...q,
+        id: generatedId,
+        questionId: generatedId,
+        used: false
+      };
+    });
   } catch (error) {
     console.warn("Primary AI failed, attempting OpenRouter fallback...", error);
     
@@ -251,8 +338,8 @@ export async function generateQuestions(
       if (!process.env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is missing");
 
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        const prompt = buildQuestionPrompt(categories, countPerCategory, avoidanceList);
-        const fallbackPrompt = prompt + `\n\nCRITICAL: You MUST return ONLY valid JSON matching this structure without any markdown fencing or extra text: {"questions": [{"category": "string", "question": "string", "choices": ["string", "string", "string", "string"], "answerIndex": 0, "correctQuip": "string", "wrongAnswerQuips": {"0": "string", "1": "string", "2": "string", "3": "string"}}]}`;
+        const prompt = buildQuestionPrompt(categories, countPerCategory, avoidanceList, requestedDifficulty);
+        const fallbackPrompt = prompt;
 
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
@@ -271,10 +358,10 @@ export async function generateQuestions(
         if (!response.ok) throw new Error(`OpenRouter returned ${response.status}`);
 
         const data = await response.json();
-        let content = data.choices?.[0]?.message?.content || '{"questions": []}';
-
-        // Strip markdown codeblocks if openrouter models ignore instructions
-        content = content.replace(/```json/g, '').replace(/```/g, '').trim();
+        const content = data.choices?.[0]?.message?.content || '';
+        if (!content.trim().startsWith('{') || !content.trim().endsWith('}')) {
+          throw new Error('Fallback generator returned non-JSON content');
+        }
 
         const parsedData = JSON.parse(content);
         const deduped = dedupeQuestions(parsedData.questions || [], avoidanceList, countPerCategory);
@@ -295,11 +382,15 @@ export async function generateQuestions(
         if (hasEnough) break;
       }
 
-      return accepted.map((q, index) => ({
-        ...q,
-        id: `or-${Date.now()}-${index}`,
-        used: false
-      }));
+      return accepted.map((q, index) => {
+        const generatedId = `or-${Date.now()}-${index}`;
+        return {
+          ...q,
+          id: generatedId,
+          questionId: generatedId,
+          used: false
+        };
+      });
     } catch (fallbackError) {
       console.error("Fallback OpenRouter failed:", fallbackError);
       return [];

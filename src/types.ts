@@ -1,11 +1,18 @@
-export type Category = 'History' | 'Science' | 'Pop Culture' | 'Art & Music' | 'Sports' | 'Random';
+export type Category = 'History' | 'Science' | 'Pop Culture' | 'Art & Music' | 'Sports' | 'Technology' | 'Random';
 
 export interface TriviaQuestion {
   id: string;
+  questionId?: string;
   category: string;
+  difficulty: 'easy' | 'medium' | 'hard';
   question: string;
   choices: string[];
+  correctIndex: number;
   answerIndex: number;
+  explanation: string;
+  validationStatus: 'pending' | 'approved' | 'rejected';
+  createdAt: number;
+  usedCount: number;
   correctQuip: string;
   wrongAnswerQuips: Record<number, string>;
   used: boolean;
@@ -41,7 +48,24 @@ export interface GameState {
   lastUpdated: any;
 }
 
-export const CATEGORIES: Category[] = ['History', 'Science', 'Pop Culture', 'Art & Music', 'Sports', 'Random'];
+export interface UserSettings {
+  themeMode: 'dark' | 'light';
+  soundEnabled: boolean;
+  musicEnabled: boolean;
+  sfxEnabled: boolean;
+  commentaryEnabled: boolean;
+  updatedAt: number;
+}
+
+export const CATEGORIES: Category[] = ['History', 'Science', 'Pop Culture', 'Art & Music', 'Sports', 'Technology', 'Random'];
+
+export function getPlayableCategories(): Exclude<Category, 'Random'>[] {
+  return CATEGORIES.filter((category): category is Exclude<Category, 'Random'> => category !== 'Random');
+}
+
+export function isPlayableCategory(category: string): boolean {
+  return getPlayableCategories().includes(category as Exclude<Category, 'Random'>);
+}
 
 export const CATEGORY_COLORS: Record<string, string> = {
   'History': '#F43F5E', // Rose 500
@@ -49,5 +73,6 @@ export const CATEGORY_COLORS: Record<string, string> = {
   'Pop Culture': '#D946EF', // Fuchsia 500
   'Art & Music': '#10B981', // Emerald 500
   'Sports': '#F59E0B', // Amber 500
+  'Technology': '#3B82F6', // Blue 500
   'Random': '#FFFFFF',
 };

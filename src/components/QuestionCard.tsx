@@ -21,7 +21,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="w-full max-w-2xl mx-auto p-8 bg-zinc-900/80 backdrop-blur-md border border-white/10 rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-500 ease-in-out"
+      className="w-full max-w-2xl mx-auto p-8 theme-panel-strong backdrop-blur-md border rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-500 ease-in-out"
     >
       <div className="flex items-center justify-between mb-8">
         <div 
@@ -32,7 +32,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
         </div>
       </div>
       
-      <h2 className="text-3xl font-black text-white mb-10 leading-tight">
+      <h2 className="text-3xl font-black mb-10 leading-tight">
         {question.question}
       </h2>
       
@@ -42,9 +42,9 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
           const isCorrect = correctId === i;
           const isWrong = isSelected && correctId !== null && !isCorrect;
           
-          let borderColor = 'border-white/10';
-          let bgColor = 'bg-zinc-800/50';
-          let textColor = 'text-zinc-300';
+          let borderColor = 'theme-border';
+          let bgColor = 'theme-soft-surface';
+          let textColor = 'theme-text-secondary';
           
           if (isCorrect) {
             borderColor = 'border-emerald-500/50';
@@ -63,14 +63,14 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
           return (
             <motion.button
               key={i}
-              whileHover={!disabled ? { scale: 1.01, backgroundColor: 'rgba(255,255,255,0.05)' } : {}}
+              whileHover={!disabled ? { scale: 1.01, backgroundColor: 'var(--app-hover)' } : {}}
               whileTap={!disabled ? { scale: 0.99 } : {}}
               onClick={() => !disabled && onSelect(i)}
               disabled={disabled}
               className={`w-full p-5 text-left rounded-xl border transition-all duration-300 ease-in-out hover:shadow-md ${borderColor} ${bgColor} group`}
             >
               <div className="flex items-center gap-4">
-                <span className={`w-8 h-8 flex items-center justify-center rounded-lg shadow-inner bg-zinc-950/50 text-xs font-bold transition-colors duration-300 ${isSelected ? 'text-white' : 'text-zinc-500'}`}>
+                <span className={`w-8 h-8 flex items-center justify-center rounded-lg shadow-inner theme-avatar-surface text-xs font-bold transition-colors duration-300 ${isSelected ? 'text-white' : 'theme-text-muted'}`}>
                   {String.fromCharCode(65 + i)}
                 </span>
                 <span className={`font-medium text-lg ${textColor}`}>

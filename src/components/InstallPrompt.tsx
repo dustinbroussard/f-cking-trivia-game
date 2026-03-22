@@ -70,21 +70,21 @@ export function InstallPrompt() {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 50, scale: 0.95 }}
           transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-          className="fixed bottom-6 left-6 right-6 md:left-auto md:right-6 md:w-96 bg-zinc-900 border border-white/10 rounded-xl p-4 shadow-2xl z-[100] flex flex-col gap-3"
+          className="fixed bottom-6 left-6 right-6 md:left-auto md:right-6 md:w-96 theme-panel-strong rounded-xl p-4 z-[100] flex flex-col gap-3"
         >
           <div className="flex items-start justify-between">
             <div className="flex gap-3 items-center">
-              <div className="w-12 h-12 bg-zinc-800 rounded-lg shrink-0 flex items-center justify-center p-2 shadow-inner">
+              <div className="w-12 h-12 theme-avatar-surface rounded-lg shrink-0 flex items-center justify-center p-2 shadow-inner border">
                 <img src={logoSrc} alt="AFTG Logo" className="w-full h-full object-contain" />
               </div>
               <div>
-                <h3 className="text-white font-bold text-sm tracking-wide">Install A F-cking Trivia Game</h3>
-                <p className="text-zinc-400 text-xs mt-0.5">Play faster, offline, and full-screen.</p>
+                <h3 className="font-bold text-sm tracking-wide">Install A F-cking Trivia Game</h3>
+                <p className="theme-text-muted text-xs mt-0.5">Play faster, offline, and full-screen.</p>
               </div>
             </div>
             <button
               onClick={handleDismiss}
-              className="p-1 text-zinc-500 hover:text-white rounded-md hover:bg-white/5 transition-colors"
+              className="p-1 theme-icon-button rounded-md transition-colors"
             >
               <X className="w-4 h-4" />
             </button>

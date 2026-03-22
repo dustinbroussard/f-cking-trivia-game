@@ -70,7 +70,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti,
 
       {/* Avatar Selection */}
       <div className="w-full space-y-4 flex flex-col items-center">
-        <p className="text-center text-[10px] font-black uppercase tracking-widest text-zinc-500">Choose Your Fighter</p>
+        <p className="text-center text-[10px] font-black uppercase tracking-widest theme-text-muted">Choose Your Fighter</p>
         
         <input 
           type="file" 
@@ -82,16 +82,16 @@ export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti,
         
         <button 
           onClick={() => fileInputRef.current?.click()} 
-          className="relative w-24 h-24 rounded-2xl bg-zinc-900 border-2 border-zinc-800 overflow-hidden flex items-center justify-center hover:border-pink-500 transition-all group shadow-xl hover:shadow-pink-500/20 duration-300 ease-in-out"
+          className="relative w-24 h-24 rounded-2xl theme-panel-strong border-2 overflow-hidden flex items-center justify-center hover:border-pink-500 transition-all group shadow-xl hover:shadow-pink-500/20 duration-300 ease-in-out"
         >
           {selectedAvatar ? (
             <img src={selectedAvatar} alt="Avatar" className="w-full h-full object-cover" />
           ) : (
-            <User className="w-10 h-10 text-zinc-600 group-hover:text-pink-500 transition-colors" />
+            <User className="w-10 h-10 theme-text-muted group-hover:text-pink-500 transition-colors" />
           )}
           
-          <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-            <Upload className="w-6 h-6 text-white" />
+          <div className="absolute inset-0 theme-overlay flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white">
+            <Upload className="w-6 h-6" />
           </div>
         </button>
       </div>
@@ -101,7 +101,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti,
         <h3 className="text-xl font-black text-cyan-400 uppercase tracking-tight">
           A F-CKING TRIVIA GAME
         </h3>
-        <p className="text-zinc-400 font-medium text-lg">
+        <p className="theme-text-secondary font-medium text-lg">
           Fast. Funny. Fair. No BS. 🎯
         </p>
       </div>
@@ -147,7 +147,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti,
                 placeholder="CODE"
                 value={joinCode}
                 onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                className="flex-1 bg-zinc-900 border border-zinc-700/50 rounded-xl px-4 text-xl font-black text-white text-center focus:outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 transition-all duration-300 ease-in-out shadow-inner"
+                className="flex-1 theme-input border rounded-xl px-4 text-xl font-black text-center focus:outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 transition-all duration-300 ease-in-out shadow-inner"
               />
               <button
                 onClick={() => joinCode.length === 4 && onJoinMulti(joinCode, selectedAvatar)}
@@ -158,7 +158,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti,
               </button>
               <button
                 onClick={() => setShowJoinInput(false)}
-                className="px-4 bg-zinc-800 hover:bg-zinc-700 rounded-xl font-black text-white transition-all duration-300 ease-in-out shadow-md"
+                className="px-4 theme-button rounded-xl font-black transition-all duration-300 ease-in-out shadow-md"
               >
                 ✕
               </button>
@@ -169,10 +169,10 @@ export const GameLobby: React.FC<GameLobbyProps> = ({ onStartSolo, onStartMulti,
 
       {/* Footer */}
       <div className="text-center space-y-4 max-w-xs">
-        <p className="text-zinc-500 font-bold text-lg">
+        <p className="theme-text-muted font-bold text-lg">
           No ads. No coins. No bullsh*t. 🚫
         </p>
-        <p className="text-zinc-600 font-medium text-sm leading-relaxed">
+        <p className="theme-text-secondary font-medium text-sm leading-relaxed">
           Answer one question from each category to win. Get one wrong and your turn ends. 💀
         </p>
       </div>

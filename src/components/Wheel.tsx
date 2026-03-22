@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, useAnimation } from 'motion/react';
 import { CATEGORIES, CATEGORY_COLORS } from '../types';
-import { Landmark, Atom, Tv, Palette, Trophy, Dices } from 'lucide-react';
+import { Landmark, Atom, Tv, Palette, Trophy, Dices, Cpu } from 'lucide-react';
 
 const CATEGORY_ICONS: Record<string, any> = {
   'History': Landmark,
@@ -9,6 +9,7 @@ const CATEGORY_ICONS: Record<string, any> = {
   'Pop Culture': Tv,
   'Art & Music': Palette,
   'Sports': Trophy,
+  'Technology': Cpu,
   'Random': Dices,
 };
 
@@ -59,16 +60,17 @@ export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsS
       <audio ref={spinAudioRef} src="/spin.mp3" />
       
       {/* Pointer (The triangle at the top) */}
-      <div className="absolute -top-6 left-1/2 -translate-x-1/2 z-20 w-0 h-0 border-l-[18px] border-l-transparent border-r-[18px] border-r-transparent border-t-[30px] border-t-white drop-shadow-[0_4px_10px_rgba(0,0,0,0.5)]" />
+      <div className="absolute -top-6 left-1/2 -translate-x-1/2 z-20 w-0 h-0 border-l-[18px] border-l-transparent border-r-[18px] border-r-transparent border-t-[30px] border-t-[var(--app-text)] drop-shadow-[0_4px_10px_rgba(0,0,0,0.5)]" />
       
       <motion.div
         animate={controls}
         initial={{ rotate: rotation }}
-        className="w-full h-full rounded-full border-8 border-white/20 overflow-hidden relative shadow-[0_0_40px_rgba(255,255,255,0.15)] ring-4 ring-white/10"
+        className="w-full h-full rounded-full border-8 overflow-hidden relative ring-4"
+        style={{ borderColor: 'var(--app-border-strong)', boxShadow: 'var(--app-shadow-soft)' }}
       >
         {/* SVG Wheel Background */}
         <svg viewBox="0 0 200 200" className="w-full h-full drop-shadow-xl" style={{ transform: `rotate(${wheelInitialOffset}deg)` }}>
-          <circle cx="100" cy="100" r="100" fill="#18181b" />
+          <circle cx="100" cy="100" r="100" fill="var(--app-bg-elevated)" />
           {CATEGORIES.map((cat, i) => {
             const startAngle = i * segmentAngle;
             const endAngle = (i + 1) * segmentAngle;
@@ -137,9 +139,10 @@ export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsS
         <button 
           onClick={() => !isSpinning && setIsSpinning(true)}
           disabled={isSpinning}
-          className="w-20 h-20 bg-zinc-900 border-[6px] border-white rounded-full flex items-center justify-center z-30 hover:scale-110 active:scale-95 transition-all duration-300 disabled:opacity-50 disabled:hover:scale-100 shadow-[0_0_30px_rgba(255,255,255,0.3)] hover:shadow-[0_0_40px_rgba(255,255,255,0.4)]"
+          className="w-20 h-20 theme-button border-[6px] rounded-full flex items-center justify-center z-30 hover:scale-110 active:scale-95 transition-all duration-300 disabled:opacity-50 disabled:hover:scale-100"
+          style={{ borderColor: 'var(--app-text)' }}
         >
-          <span className="text-sm font-black uppercase tracking-[0.2em] ml-1 text-white">Spin</span>
+          <span className="text-sm font-black uppercase tracking-[0.2em] ml-1">Spin</span>
         </button>
       </div>
     </div>
