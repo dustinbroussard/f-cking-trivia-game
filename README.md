@@ -1,7 +1,3 @@
-<div align="center">
-  <img width="1200" height="475" alt="A F-cking Trivia Game banner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
-
 # A F-cking Trivia Game
 
 A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built with React, Vite, Firebase, and Gemini/OpenRouter. It mixes a game-show wheel, AI-generated question batches, live Firestore sync, lobby chat, audio cues, and sarcastic roast copy into something that feels closer to a chaotic couch competition than a polite quiz app.
