@@ -158,7 +158,13 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                 maxLength={4}
                 placeholder="CODE"
                 value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                autoCapitalize="characters"
+                autoCorrect="off"
+                autoComplete="off"
+                spellCheck={false}
+                inputMode="text"
+                pattern="[A-Z0-9]{4}"
                 className="flex-1 theme-input border rounded-xl px-4 text-xl font-black text-center focus:outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 transition-all duration-300 ease-in-out shadow-inner"
               />
               <button type="button"
@@ -231,7 +237,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
             <h4 className="text-sm font-black uppercase tracking-widest">Recent Players</h4>
           </div>
           {inviteFeedback && (
-            <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">
+            <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400" role="status" aria-live="polite">
               {inviteFeedback}
             </span>
           )}

@@ -3,8 +3,27 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig } from 'vite';
 
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "img-src 'self' data: blob: https://*.googleusercontent.com https://*.gstatic.com https://*.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "media-src 'self' blob:",
+  "connect-src 'self' https://*.googleapis.com https://*.googleusercontent.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://www.googleapis.com https://openrouter.ai https://generativelanguage.googleapis.com",
+  "worker-src 'self' blob:",
+  "manifest-src 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  'upgrade-insecure-requests',
+].join('; ');
+
 const SECURITY_HEADERS = {
+  'Content-Security-Policy': CONTENT_SECURITY_POLICY,
   'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
+  'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'X-Content-Type-Options': 'nosniff',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()'
