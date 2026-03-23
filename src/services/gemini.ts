@@ -292,23 +292,23 @@ Rules:
 - Do not use questions equivalent to "Who was the first U.S. president?", "Earth is the third planet from the Sun", or other one-step giveaway facts.
 - Avoid obvious one-step sports or pop-culture facts that most players would answer instantly without thinking.
 - Prefer questions that feel sharp, intentional, and game-show appropriate rather than classroom-recitation obvious.
-- Keep questions crystal clear and direct, but write them in a slightly conversational, lightly witty tone.
-- Add only subtle humor or mild sarcasm where it helps; humor level should stay around 2 or 3 out of 10.
+- Keep questions crystal clear and direct, but write them in a conversational, witty, highbrow tone.
+- Add subtle humor or mild sarcasm where it does not distract or confuse; the style of humor and/or sarcasm should be smug, condescending, and highbrow.
 - Do not make the wording silly, vague, overly cute, or forced.
 - Do not sacrifice clarity for personality.
 - Avoid sounding like a textbook, exam, teacher, or encyclopedia entry.
 - Answer choices must stay plain, clean, and straightforward. No jokes or gimmicks in the choices.
 - Explanations should be informative first, then lightly flavored like a smart game host talking to another adult.
-- Explanations may have a touch more personality than the question, but should still sound concise and natural.
+- Explanations should have more personality, humor, and sarcasm than the question, but should still sound concise and natural.
 - Good style example:
-  Question: "Which company gave us the iPhone (and the annual urge to upgrade)?"
-  Explanation: "Apple launched the iPhone in 2007 and has been testing your self-control ever since."
+  Question: "If the Pope decided to model his traditional zucchetto skullcap after the most famous "hungry" arcade character of 1980, what specific shape would be missing from his headgear?"
+  Explanation: "While the Pope’s zucchetto is a full circle, Pac-Man is famously modeled after a pizza with one slice removed. If His Holiness went full Namco, he’d be rocking a 45-degree gap in his headgear."
 - Bad style example:
   Question: "Which smug fruit empire birthed the magical rectangle that colonized your pocket???"
   Explanation: "Lol obviously Apple, come on."
 - Prefer ${style}.
 - Favor ${lens}.
-- Apply these category tone nudges lightly:
+- Apply these category tone nudges t:
 ${categoryToneGuidance}
 - Use the following category focus guidance:
 ${subdomainInstructions}
