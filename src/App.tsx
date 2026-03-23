@@ -31,6 +31,7 @@ import { Roast } from './components/Roast';
 import { SettingsModal } from './components/SettingsModal';
 import { TrashTalkOverlay } from './components/TrashTalkOverlay';
 import { InstallPrompt } from './components/InstallPrompt';
+import { CategoryReveal } from './components/CategoryReveal';
 import { getTrashTalkLine, TrashTalkEvent } from './content/trashTalk';
 import { publicAsset } from './assets';
 import { motion, AnimatePresence } from 'motion/react';
@@ -84,6 +85,7 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [correctAnswer, setCorrectAnswer] = useState<number | null>(null);
+  const [revealedCategory, setRevealedCategory] = useState<string | null>(null);
   const [lastAnswerCorrect, setLastAnswerCorrect] = useState(false);
   const [manualPickReady, setManualPickReady] = useState(false);
   const [showManualPickPrompt, setShowManualPickPrompt] = useState(false);
@@ -99,6 +101,7 @@ export default function App() {
   const lostAudioRef = useRef<HTMLAudioElement>(null);
   const prevGameStatus = useRef<string | null>(null);
   const revealTimeoutRef = useRef<number | null>(null);
+  const categoryRevealTimeoutRef = useRef<number | null>(null);
   const prevPlayersRef = useRef<Player[]>([]);
   const hasWarnedBehindRef = useRef(false);
   const hasTriggeredMatchLossRef = useRef(false);
@@ -217,11 +220,33 @@ export default function App() {
       revealTimeoutRef.current = null;
     }
 
+    if (categoryRevealTimeoutRef.current) {
+      window.clearTimeout(categoryRevealTimeoutRef.current);
+      categoryRevealTimeoutRef.current = null;
+    }
+
     setRoast(null);
+    setRevealedCategory(null);
     setCurrentQuestion(null);
     setSelectedCategory(null);
     setSelectedAnswer(null);
     setCorrectAnswer(null);
+  };
+
+  const showCategoryReveal = (category: string, question: TriviaQuestion) => {
+    if (categoryRevealTimeoutRef.current) {
+      window.clearTimeout(categoryRevealTimeoutRef.current);
+    }
+
+    setSelectedCategory(category);
+    setRevealedCategory(category);
+    setCurrentQuestion(null);
+
+    categoryRevealTimeoutRef.current = window.setTimeout(() => {
+      setRevealedCategory(null);
+      setCurrentQuestion(question);
+      categoryRevealTimeoutRef.current = null;
+    }, 1100);
   };
 
   const continueAfterExplanation = () => {
@@ -636,7 +661,6 @@ export default function App() {
 
   const handleSpinComplete = (category: string) => {
     setIsSpinning(false);
-    setSelectedCategory(category);
     setResultPhase('idle');
     const resolvedCategory = resolveWheelCategory(category);
     
@@ -644,7 +668,7 @@ export default function App() {
     const available = questions.filter(q => !q.used && q.category === resolvedCategory);
     if (available.length > 0) {
       const q = available[Math.floor(Math.random() * available.length)];
-      setCurrentQuestion(q);
+      showCategoryReveal(resolvedCategory, q);
       ensureQuestionInventory({
         category: resolvedCategory,
         difficulty: q.difficulty || 'medium',
@@ -665,7 +689,7 @@ export default function App() {
       }).then(newQs => {
         if (newQs.length > 0) {
           const q = newQs[0];
-          setCurrentQuestion(q);
+          showCategoryReveal(resolvedCategory, q);
           // Save new questions to DB
           persistQuestionsToGame(game!.id, newQs).catch((err) => {
             handleFirestoreError(err, OperationType.WRITE, `games/${game!.id}/questions`);
@@ -803,6 +827,11 @@ export default function App() {
   };
 
   const resetGame = () => {
+    if (categoryRevealTimeoutRef.current) {
+      window.clearTimeout(categoryRevealTimeoutRef.current);
+      categoryRevealTimeoutRef.current = null;
+    }
+
     setGame(null);
     setPlayers([]);
     setQuestions([]);
@@ -812,6 +841,7 @@ export default function App() {
     setLastAnswerCorrect(false);
     setManualPickReady(false);
     setShowManualPickPrompt(false);
+    setRevealedCategory(null);
     setResultPhase('idle');
     setQueuedSpecialEvent(null);
     setActiveTrashTalk(null);
@@ -1312,6 +1342,8 @@ export default function App() {
           onClose={nextTurn} 
         />
       )}
+
+      <CategoryReveal category={revealedCategory} />
 
       <TrashTalkOverlay
         event={activeTrashTalkEvent}
