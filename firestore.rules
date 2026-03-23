@@ -28,5 +28,9 @@ service cloud.firestore {
         allow read, write: if isAuthenticated();
       }
     }
+
+    match /questionBank/{questionId} {
+      allow read, write: if isAuthenticated();
+    }
   }
 }
