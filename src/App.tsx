@@ -117,6 +117,9 @@ export default function App() {
   );
 
   const [error, setError] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine
+  );
   const [isSolo, setIsSolo] = useState(false);
   const [settings, setSettings] = useState<UserSettings>(() => getLocalSettings());
   const [showSettings, setShowSettings] = useState(false);
@@ -716,6 +719,19 @@ export default function App() {
         }
       });
   }, [settings, user?.uid, remoteSettingsResolved]);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   useEffect(() => {
     finishSignInRedirect().catch((err: any) => {
@@ -1755,6 +1771,25 @@ export default function App() {
 
         <main className={`max-w-3xl mx-auto p-4 pb-24 ${isQuestionActive ? 'pt-6' : ''}`}>
           <AnimatePresence>
+            {!isOnline && (
+              <motion.div
+                key="offline-banner"
+                initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                transition={{ duration: 0.25, ease: 'easeOut' }}
+                className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 shadow-[0_8px_20px_rgba(245,158,11,0.12)]"
+                role="status"
+                aria-live="polite"
+              >
+                <p className="mb-1 text-xs font-black uppercase tracking-[0.22em] text-amber-400">
+                  Offline mode
+                </p>
+                <p className="text-sm theme-text-secondary">
+                  Reconnect to resume multiplayer sync, AI question generation, and invite updates.
+                </p>
+              </motion.div>
+            )}
             {error && (
               <motion.div
                 key="error-banner"
