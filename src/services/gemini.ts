@@ -1,11 +1,9 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { Type } from "@google/genai";
 import { TriviaQuestion } from "../types";
-import { buildHecklePrompt, HeckleGenerationContext, MAX_HECKLES } from "../content/heckles";
+import { HeckleGenerationContext, MAX_HECKLES } from "../content/heckles";
 import { getGenerationCategoryProfile } from "./categorySubdomains";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
-
-const questionSchema = {
+export const questionSchema = {
   type: Type.OBJECT,
   properties: {
     questions: {
@@ -29,7 +27,7 @@ const questionSchema = {
   }
 };
 
-const heckleSchema = {
+export const heckleSchema = {
   type: Type.OBJECT,
   properties: {
     heckles: {
@@ -40,7 +38,7 @@ const heckleSchema = {
   required: ["heckles"]
 };
 
-type ExistingQuestion = Pick<TriviaQuestion, 'category' | 'question'>;
+export type ExistingQuestion = Pick<TriviaQuestion, 'category' | 'question'>;
 
 const QUESTION_LENSES = [
   'obscure-but-fair connections',
@@ -63,19 +61,18 @@ const QUESTION_STYLES = [
 
 const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 60_000;
 
-type ProviderName = 'gemini' | 'openrouter';
+type ProviderName = 'server';
 
 const providerCooldowns: Record<ProviderName, number> = {
-  gemini: 0,
-  openrouter: 0,
+  server: 0,
 };
 
 function logGeneration(message: string) {
-  if (!import.meta.env.DEV) return;
+  if (typeof process !== 'undefined' && process.env.NODE_ENV === 'production') return;
   console.warn(`[questionGeneration] ${message}`);
 }
 
-function extractRetryDelayMs(message: string | null | undefined) {
+export function extractRetryDelayMs(message: string | null | undefined) {
   if (!message) return null;
 
   const retryAfterSeconds = message.match(/retry(?:-after)?[^0-9]*(\d+)\s*s/i);
@@ -90,7 +87,7 @@ function extractRetryDelayMs(message: string | null | undefined) {
   return null;
 }
 
-function isRateLimitError(error: unknown) {
+export function isRateLimitError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return /\b429\b|rate limit|quota|resource exhausted|too many requests/i.test(message);
 }
@@ -111,20 +108,15 @@ function isProviderCoolingDown(provider: ProviderName) {
 
 export function getQuestionGenerationStatus() {
   const now = Date.now();
-  const geminiCooldownUntil = getProviderCooldownUntil('gemini');
-  const openRouterCooldownUntil = getProviderCooldownUntil('openrouter');
-  const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
-  const hasOpenRouterKey = Boolean(process.env.OPENROUTER_API_KEY);
-  const canAttemptGemini = hasGeminiKey && !isProviderCoolingDown('gemini');
-  const canAttemptOpenRouter = hasOpenRouterKey && !isProviderCoolingDown('openrouter');
-  const canAttemptAny = canAttemptGemini || canAttemptOpenRouter;
+  const cooldownUntil = getProviderCooldownUntil('server');
+  const canAttemptAny = !isProviderCoolingDown('server');
 
   return {
-    geminiCooldownUntil,
-    openRouterCooldownUntil,
-    hasGeminiKey,
-    canAttemptGemini,
-    canAttemptOpenRouter,
+    geminiCooldownUntil: cooldownUntil,
+    openRouterCooldownUntil: cooldownUntil,
+    hasGeminiKey: true,
+    canAttemptGemini: canAttemptAny,
+    canAttemptOpenRouter: false,
     canAttemptAny,
     message: canAttemptAny
       ? null
@@ -157,7 +149,7 @@ function buildSubdomainInstructions(categories: string[], requestedCount: number
     };
   });
 
-  if (import.meta.env.DEV) {
+  if (typeof process === 'undefined' || process.env.NODE_ENV !== 'production') {
     profiles.forEach((profile) => {
       console.warn(
         `[questionGeneration] ${profile.category} subdomains: ${profile.featured.join(', ') || 'none'}`
@@ -235,7 +227,7 @@ function isValidQuestionShape(question: any) {
   return true;
 }
 
-function buildQuestionPrompt(
+export function buildQuestionPrompt(
   categories: string[],
   countPerCategory: number,
   existingQuestions: ExistingQuestion[],
@@ -329,7 +321,7 @@ Avoided questions:
 ${avoidedQuestions || '- None recorded'}`;
 }
 
-function dedupeQuestions(
+export function dedupeQuestions(
   generatedQuestions: any[],
   existingQuestions: ExistingQuestion[],
   countPerCategory: number
@@ -379,83 +371,46 @@ function dedupeQuestions(
   return accepted;
 }
 
-async function requestQuestions(prompt: string) {
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: questionSchema as any
-    }
-  });
-
-  const text = response.text || '';
-  if (!text.trim().startsWith('{') || !text.trim().endsWith('}')) {
-    throw new Error('Generator returned non-JSON content');
-  }
-
-  return JSON.parse(text);
-}
-
-async function requestHeckles(prompt: string) {
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: heckleSchema as any
-    }
-  });
-
-  const text = response.text || '';
-  if (!text.trim().startsWith('{') || !text.trim().endsWith('}')) {
-    throw new Error('Heckle generator returned non-JSON content');
-  }
-
-  return JSON.parse(text);
-}
-
-async function requestOpenRouterQuestions(prompt: string) {
-  if (!process.env.OPENROUTER_API_KEY) {
-    throw new Error("OPENROUTER_API_KEY is missing");
-  }
-
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
+async function requestQuestionsFromApi(payload: {
+  categories: string[];
+  countPerCategory: number;
+  existingQuestions: ExistingQuestion[];
+  requestedDifficulty?: 'easy' | 'medium' | 'hard';
+}) {
+  const response = await fetch('/api/generate-questions', {
+    method: 'POST',
     headers: {
-      "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": window.location.href,
-      "X-Title": "AFTG Trivia"
+      'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      model: "openrouter/free",
-      messages: [{ role: "user", content: prompt }]
-    })
+    body: JSON.stringify(payload),
   });
 
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const retryAfterHeader = response.headers.get('retry-after');
-    const retryDelayMs = retryAfterHeader
-      ? Number(retryAfterHeader) * 1000
-      : null;
-    const detail = await response.text().catch(() => '');
-    const error = new Error(`OpenRouter returned ${response.status}${detail ? `: ${detail}` : ''}`);
-
     if (response.status === 429) {
-      setProviderCooldown('openrouter', retryDelayMs ?? extractRetryDelayMs(detail));
+      setProviderCooldown('server', data.retryAfterMs ?? extractRetryDelayMs(data.error));
     }
-
-    throw error;
+    throw new Error(data.error || `Question generation failed with status ${response.status}`);
   }
 
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content || '';
-  if (!content.trim().startsWith('{') || !content.trim().endsWith('}')) {
-    throw new Error('Fallback generator returned non-JSON content');
+  return data;
+}
+
+async function requestHecklesFromApi(context: HeckleGenerationContext) {
+  const response = await fetch('/api/generate-heckles', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(context),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || `Heckle generation failed with status ${response.status}`);
   }
 
-  return JSON.parse(content);
+  return data;
 }
 
 export async function generateQuestions(
@@ -464,69 +419,35 @@ export async function generateQuestions(
   existingQuestions: ExistingQuestion[] = [],
   requestedDifficulty?: 'easy' | 'medium' | 'hard'
 ): Promise<TriviaQuestion[]> {
-  const prompt = buildQuestionPrompt(categories, countPerCategory, existingQuestions, requestedDifficulty);
-
-  const finalizeQuestions = (accepted: TriviaQuestion[], prefix: string) => {
-    return accepted.map((q, index) => {
-      const generatedId = `${prefix}${Date.now()}-${index}`;
-      return {
-        ...q,
-        id: generatedId,
-        questionId: generatedId,
-        used: false
-      };
-    });
-  };
-
-  if (getQuestionGenerationStatus().canAttemptGemini) {
-    try {
-      const data = await requestQuestions(prompt);
-      const accepted = dedupeQuestions(data.questions || [], existingQuestions, countPerCategory);
-      return finalizeQuestions(accepted, '');
-    } catch (error) {
-      if (isRateLimitError(error)) {
-        setProviderCooldown('gemini', extractRetryDelayMs(error instanceof Error ? error.message : String(error)));
-      }
-
-      logGeneration(`Gemini failed${isRateLimitError(error) ? ' with rate limit' : ''}`);
-    }
-  } else if (isProviderCoolingDown('gemini')) {
-    logGeneration('generation skipped: Gemini cooldown active');
-  }
-
-  if (!process.env.OPENROUTER_API_KEY) {
-    logGeneration('generation failed: both providers unavailable');
-    return [];
-  }
-
-  if (isProviderCoolingDown('openrouter')) {
-    logGeneration('generation skipped: OpenRouter cooldown active');
-    logGeneration('generation failed: both providers unavailable');
+  if (!getQuestionGenerationStatus().canAttemptAny) {
+    logGeneration('generation skipped: server cooldown active');
     return [];
   }
 
   try {
-    const data = await requestOpenRouterQuestions(prompt);
-    const accepted = dedupeQuestions(data.questions || [], existingQuestions, countPerCategory);
-    return finalizeQuestions(accepted, 'or-');
-  } catch (fallbackError) {
-    if (isRateLimitError(fallbackError)) {
-      setProviderCooldown('openrouter', extractRetryDelayMs(fallbackError instanceof Error ? fallbackError.message : String(fallbackError)));
+    const data = await requestQuestionsFromApi({
+      categories,
+      countPerCategory,
+      existingQuestions,
+      requestedDifficulty,
+    });
+    return Array.isArray(data.questions) ? data.questions : [];
+  } catch (error) {
+    if (isRateLimitError(error)) {
+      setProviderCooldown('server', extractRetryDelayMs(error instanceof Error ? error.message : String(error)));
     }
-
-    logGeneration(`OpenRouter failed${isRateLimitError(fallbackError) ? ' with rate limit' : ''}`);
-    logGeneration('generation failed: both providers unavailable');
+    logGeneration(`server generation failed${isRateLimitError(error) ? ' with rate limit' : ''}`);
     return [];
   }
 }
 
 export async function generateHeckles(context: HeckleGenerationContext): Promise<string[]> {
-  if (!process.env.GEMINI_API_KEY || context.isSolo) {
+  if (context.isSolo) {
     return [];
   }
 
   try {
-    const data = await requestHeckles(buildHecklePrompt(context));
+    const data = await requestHecklesFromApi(context);
     const rawHeckles = Array.isArray(data.heckles) ? data.heckles : [];
 
     return rawHeckles
@@ -535,7 +456,7 @@ export async function generateHeckles(context: HeckleGenerationContext): Promise
       .filter((heckle) => heckle.length > 0)
       .slice(0, MAX_HECKLES);
   } catch (error) {
-    if (import.meta.env.DEV) {
+    if (typeof process === 'undefined' || process.env.NODE_ENV !== 'production') {
       console.warn('[heckles] Generation failed:', error);
     }
     return [];
