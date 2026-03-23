@@ -49,9 +49,6 @@ export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsS
     <div className="relative w-80 h-80 mx-auto drop-shadow-2xl">
       <audio ref={spinAudioRef} src="/spin.mp3" />
       
-      {/* Pointer (The triangle at the top) */}
-      <div className="absolute -top-6 left-1/2 -translate-x-1/2 z-20 w-0 h-0 border-l-[18px] border-l-transparent border-r-[18px] border-r-transparent border-t-[30px] border-t-[var(--app-text)] drop-shadow-[0_4px_10px_rgba(0,0,0,0.5)]" />
-      
       <motion.div
         animate={controls}
         initial={{ rotate: rotation }}

@@ -1290,7 +1290,7 @@ export default function App() {
                   <div className="space-y-8">
                     {!currentQuestion ? (
                       <div className="flex flex-col items-center gap-8">
-                        <p className="text-sm font-bold uppercase tracking-widest text-cyan-400 animate-pulse">Your Turn</p>
+                        <p className="text-base font-black uppercase tracking-widest text-cyan-400 animate-pulse">Your Turn</p>
                         {manualPickReady && showManualPickPrompt ? (
                           <ManualCategoryPrompt
                             categories={playableCategories}
