@@ -56,7 +56,7 @@ type LoadingStep =
   | 'finalizing_round';
 
 export default function App() {
-  const QUESTION_TIME_LIMIT_SECONDS = 15;
+  const QUESTION_TIME_LIMIT_SECONDS = 20;
   const themeAudioSrc = publicAsset('theme.mp3');
   const welcomeAudioSrc = publicAsset('welcome.mp3');
   const correctAudioSrc = publicAsset('correct.mp3');
@@ -977,6 +977,11 @@ export default function App() {
   };
 
   const handleSpinComplete = (category: string) => {
+    if (!game || game.status !== 'active') {
+      setIsSpinning(false);
+      return;
+    }
+
     setIsSpinning(false);
     setResultPhase('idle');
     const resolvedCategory = resolveWheelCategory(category);
@@ -1050,7 +1055,7 @@ export default function App() {
   };
 
   const handleAnswer = async (index: number) => {
-    if (!currentQuestion || !game || !user || selectedAnswer !== null || resultPhase !== 'idle') return;
+    if (!currentQuestion || !game || !user || game.status !== 'active' || selectedAnswer !== null || resultPhase !== 'idle') return;
 
     if (questionTimerRef.current) {
       window.clearInterval(questionTimerRef.current);
@@ -1151,7 +1156,7 @@ export default function App() {
     continueAfterExplanation();
   };
 
-  const shouldShowMatchChat = !!game && (
+  const shouldShowMatchChat = !!game && !isSolo && (
     game.status === 'waiting' ||
     (game.status === 'active' && (
       (game.currentTurn === user?.uid && !currentQuestion) ||
@@ -1578,7 +1583,7 @@ export default function App() {
                       <p className="theme-text-muted font-bold uppercase tracking-widest">Waiting for host to play again...</p>
                     )}
                   </motion.div>
-                ) : game.currentTurn === user.uid ? (
+                ) : game.status === 'active' && game.currentTurn === user.uid ? (
                   <div className="space-y-8">
                     {!currentQuestion ? (
                       <div className="flex flex-col items-center gap-8">
@@ -1618,6 +1623,13 @@ export default function App() {
                         timeRemaining={questionTimeRemaining}
                       />
                     )}
+                  </div>
+                ) : game.status === 'waiting' ? (
+                  <div className="text-center p-12 theme-panel border rounded-3xl">
+                    <Loader2 className="w-8 h-8 text-pink-500 animate-spin mx-auto mb-4" />
+                    <p className="text-lg font-medium theme-text-muted">
+                      Waiting for another player to join and for the host to start the game...
+                    </p>
                   </div>
                 ) : (
                   <div className="text-center p-12 theme-panel border rounded-3xl">
