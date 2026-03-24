@@ -735,6 +735,10 @@ export default function App() {
 
   useEffect(() => {
     finishSignInRedirect().catch((err: any) => {
+      if (err?.code === 'auth/internal-error') {
+        setError('Google sign-in failed inside this in-app browser. Open the game in Safari/Chrome and try again.');
+        return;
+      }
       setError(err?.message || 'Google sign-in failed.');
     });
   }, []);

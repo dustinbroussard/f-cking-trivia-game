@@ -80,11 +80,14 @@ export function finishSignInRedirect() {
   return redirectResultPromise;
 }
 
-const REDIRECT_FALLBACK_ERRORS = new Set([
+const POPUP_FALLBACK_ERRORS = new Set([
   'auth/popup-blocked',
   'auth/popup-closed-by-user',
   'auth/cancelled-popup-request',
   'auth/operation-not-supported-in-this-environment',
+]);
+
+const REDIRECT_FALLBACK_ERRORS = new Set([
   'auth/internal-error',
 ]);
 
@@ -98,23 +101,43 @@ const shouldPreferRedirectSignIn = () => {
   return isMobileUserAgent || !!isSmallTouchScreen;
 };
 
+const isStandalonePwa = () => {
+  if (typeof window === 'undefined') return false;
+
+  const standaloneNavigator = (window.navigator as Navigator & { standalone?: boolean }).standalone;
+  return Boolean(window.matchMedia?.('(display-mode: standalone)').matches || standaloneNavigator);
+};
+
 export const signIn = async () => {
   if (signingIn) return null;
   signingIn = true;
 
   try {
-    if (shouldPreferRedirectSignIn()) {
-      await signInWithRedirect(auth, googleProvider);
-      return null;
+    const preferRedirect = shouldPreferRedirectSignIn() && !isStandalonePwa();
+
+    if (preferRedirect) {
+      try {
+        await signInWithRedirect(auth, googleProvider);
+        return null;
+      } catch (err: any) {
+        if (REDIRECT_FALLBACK_ERRORS.has(err?.code)) {
+          return await signInWithPopup(auth, googleProvider);
+        }
+        throw err;
+      }
     }
 
-    return await signInWithPopup(auth, googleProvider);
+    try {
+      return await signInWithPopup(auth, googleProvider);
+    } catch (err: any) {
+      if (POPUP_FALLBACK_ERRORS.has(err?.code)) {
+        await signInWithRedirect(auth, googleProvider);
+        return null;
+      }
+
+      throw err;
+    }
   } catch (err: any) {
-    if (REDIRECT_FALLBACK_ERRORS.has(err?.code)) {
-      await signInWithRedirect(auth, googleProvider);
-      return null;
-    }
-
     throw err;
   } finally {
     signingIn = false;
