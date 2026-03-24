@@ -88,7 +88,7 @@
       "schema": "UserSettings",
       "description": "Private per-user settings synced across devices"
     },
-    "/questionBank/{questionId}": {
+    "/questions/{questionId}": {
       "schema": "Question",
       "description": "Canonical reusable global trivia questions"
     },

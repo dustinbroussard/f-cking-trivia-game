@@ -5,13 +5,14 @@ import {
   limit,
   orderBy,
   query,
+  serverTimestamp,
   setDoc,
   where,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { TriviaQuestion, getPlayableCategories, isPlayableCategory } from '../types';
 import { generateQuestions, getQuestionGenerationStatus } from './gemini';
-import { QUESTION_COLLECTION } from './questionCollections';
+import { QUESTION_COLLECTION, SEEN_QUESTIONS_COLLECTION } from './questionCollections';
 import { validateGeneratedQuestions } from './questionValidation';
 import { isQuestionApprovedForStorage } from './questionVerification';
 
@@ -19,6 +20,7 @@ interface GetQuestionsForSessionParams {
   categories: string[];
   count: number;
   excludeQuestionIds?: string[];
+  userId?: string;
 }
 
 const generationLocks = new Map<string, Promise<TriviaQuestion[]>>();
@@ -79,15 +81,36 @@ async function fetchApprovedQuestionsByCategory(category: string, excludeIds: Se
     where('validationStatus', '==', 'approved'),
     orderBy('usedCount', 'asc'),
     orderBy('createdAt', 'asc'),
-    limit(Math.max(count * 3, 10))
+    limit(Math.max(count * 10, 30))
   );
 
   const snapshot = await getDocs(bankQuery);
-
-  return snapshot.docs
+  const approved = snapshot.docs
     .map((entry) => toBankQuestion({ ...entry.data(), id: entry.id } as TriviaQuestion))
-    .filter((question) => !excludeIds.has(question.id))
-    .slice(0, count);
+    .filter((question) => !excludeIds.has(question.id));
+
+  return approved;
+}
+
+async function loadSeenQuestionIds(userId?: string) {
+  if (!userId) return new Set<string>();
+
+  const snapshot = await getDocs(collection(db, 'users', userId, SEEN_QUESTIONS_COLLECTION));
+  return new Set(snapshot.docs.map((entry) => entry.id));
+}
+
+function preferUnseenQuestions(questions: TriviaQuestion[], seenQuestionIds: Set<string>, count: number) {
+  if (seenQuestionIds.size === 0) {
+    return questions.slice(0, count);
+  }
+
+  const unseen = questions.filter((question) => !seenQuestionIds.has(question.id));
+  if (unseen.length >= count) {
+    return unseen.slice(0, count);
+  }
+
+  const seenFallback = questions.filter((question) => seenQuestionIds.has(question.id));
+  return [...unseen, ...seenFallback].slice(0, count);
 }
 
 async function storeQuestionsInBank(questions: TriviaQuestion[]) {
@@ -246,13 +269,19 @@ export async function getQuestionsForSession({
   categories,
   count,
   excludeQuestionIds = [],
+  userId,
 }: GetQuestionsForSessionParams): Promise<TriviaQuestion[]> {
   const uniqueCategories = [...new Set(categories.map(normalizeRequestedCategory))];
   const excludeIds = new Set(excludeQuestionIds);
+  const seenQuestionIds = await loadSeenQuestionIds(userId);
   const selected: TriviaQuestion[] = [];
 
   for (const category of uniqueCategories) {
-    const approved = await fetchApprovedQuestionsByCategory(category, excludeIds, count);
+    const approved = preferUnseenQuestions(
+      await fetchApprovedQuestionsByCategory(category, excludeIds, count),
+      seenQuestionIds,
+      count
+    );
     approved.forEach((question) => excludeIds.add(question.id));
     selected.push(...approved);
   }
@@ -284,4 +313,24 @@ export async function getQuestionsForSession({
   }
 
   return dedupeById(combined);
+}
+
+export async function markQuestionSeen({
+  userId,
+  questionId,
+  gameId,
+}: {
+  userId: string;
+  questionId: string;
+  gameId?: string;
+}) {
+  await setDoc(
+    doc(db, 'users', userId, SEEN_QUESTIONS_COLLECTION, questionId),
+    {
+      questionId,
+      seenAt: serverTimestamp(),
+      ...(gameId ? { gameId } : {}),
+    },
+    { merge: true }
+  );
 }

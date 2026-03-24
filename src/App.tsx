@@ -22,7 +22,7 @@ import {
 import { auth, db, signIn, finishSignInRedirect, handleFirestoreError, OperationType } from './firebase';
 import { ChatMessage, GameInvite, GameState, Player, RecentPlayer, RoastState, TriviaQuestion, UserSettings, getPlayableCategories } from './types';
 import { QUESTION_COLLECTION } from './services/questionCollections';
-import { ensureQuestionInventory, getQuestionsForSession } from './services/questionRepository';
+import { ensureQuestionInventory, getQuestionsForSession, markQuestionSeen } from './services/questionRepository';
 import { acceptInvite, declineInvite, expireInvite, loadRecentPlayers, sendInvite, subscribeToIncomingInvites } from './services/invites';
 import { GameLobby } from './components/GameLobby';
 import { Wheel } from './components/Wheel';
@@ -490,6 +490,19 @@ export default function App() {
     resolvedQuestionIdRef.current = null;
     setQuestionClockNow(Date.now());
   }, [currentQuestion?.id]);
+
+  useEffect(() => {
+    if (!currentQuestion || !user?.uid) return;
+
+    const questionId = currentQuestion.questionId || currentQuestion.id;
+    markQuestionSeen({
+      userId: user.uid,
+      questionId,
+      gameId: game?.id,
+    }).catch((err) => {
+      console.error('[seenQuestions] Failed to record seen question:', err);
+    });
+  }, [currentQuestion?.id, user?.uid, game?.id]);
 
   const isHighPriorityOverlayActive =
     resultPhase !== 'idle' ||
@@ -1070,7 +1083,8 @@ export default function App() {
       const initialQuestions = await getQuestionsForSession({
         categories: playableCategories,
         count: 3,
-        excludeQuestionIds: existingQuestionIds
+        excludeQuestionIds: existingQuestionIds,
+        userId: user.uid,
       });
       await persistQuestionsToGame(gameId, initialQuestions);
       kickOffInventoryReplenishment(playableCategories);
@@ -1131,7 +1145,8 @@ export default function App() {
       const initialQuestions = await getQuestionsForSession({
         categories: playableCategories,
         count: 3,
-        excludeQuestionIds: existingQuestionIds
+        excludeQuestionIds: existingQuestionIds,
+        userId: user.uid,
       });
       await persistQuestionsToGame(gameId, initialQuestions);
       kickOffInventoryReplenishment(playableCategories);
@@ -1222,7 +1237,8 @@ export default function App() {
       const initialQuestions = await getQuestionsForSession({
         categories: playableCategories,
         count: 3,
-        excludeQuestionIds: existingQuestionIds
+        excludeQuestionIds: existingQuestionIds,
+        userId: user.uid,
       });
       await persistQuestionsToGame(gameId, initialQuestions);
       kickOffInventoryReplenishment(playableCategories);
@@ -1319,7 +1335,8 @@ export default function App() {
       getQuestionsForSession({
         categories: [resolvedCategory],
         count: 3,
-        excludeQuestionIds: existingQuestionIds
+        excludeQuestionIds: existingQuestionIds,
+        userId: user!.uid,
       }).then(newQs => {
         if (newQs.length > 0) {
           setLoadingStep('finalizing_round');
@@ -1556,7 +1573,8 @@ export default function App() {
       const initialQuestions = await getQuestionsForSession({
         categories: playableCategories,
         count: 3,
-        excludeQuestionIds: existingQuestionIds
+        excludeQuestionIds: existingQuestionIds,
+        userId: user.uid,
       });
       await persistQuestionsToGame(game.id, initialQuestions);
       kickOffInventoryReplenishment(playableCategories);

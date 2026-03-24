@@ -6,3 +6,4 @@ coverage/
 *.log
 .env*
 !.env.example
+aid-studio-applet-webapp-a549d-firebase-adminsdk-fbsvc-2400a80d83.json

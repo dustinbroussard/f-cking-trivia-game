@@ -27,10 +27,6 @@ service cloud.firestore {
       }
     }
 
-    match /questionBank/{questionId} {
-      allow read, write: if isAuthenticated();
-    }
-
     match /questions/{questionId} {
       allow read, write: if isAuthenticated();
     }
@@ -47,6 +43,10 @@ service cloud.firestore {
       }
 
       match /recentPlayers/{otherUid} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /seenQuestions/{questionId} {
         allow read, write: if isOwner(userId);
       }
 
