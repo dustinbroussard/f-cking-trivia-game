@@ -15,6 +15,25 @@ export const auth = getAuth(app);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const googleProvider = new GoogleAuthProvider();
 
+const REDIRECT_PENDING_STORAGE_KEY = 'aftg_auth_redirect_pending';
+
+const canUseSessionStorage = () => typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined';
+
+const markRedirectPending = () => {
+  if (!canUseSessionStorage()) return;
+  window.sessionStorage.setItem(REDIRECT_PENDING_STORAGE_KEY, '1');
+};
+
+const clearRedirectPending = () => {
+  if (!canUseSessionStorage()) return;
+  window.sessionStorage.removeItem(REDIRECT_PENDING_STORAGE_KEY);
+};
+
+const hasPendingRedirect = () => {
+  if (!canUseSessionStorage()) return false;
+  return window.sessionStorage.getItem(REDIRECT_PENDING_STORAGE_KEY) === '1';
+};
+
 export enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',
@@ -71,10 +90,16 @@ let signingIn = false;
 let redirectResultPromise: Promise<UserCredential | null> | null = null;
 
 export function finishSignInRedirect() {
+  if (!hasPendingRedirect()) {
+    return Promise.resolve(null);
+  }
+
   if (!redirectResultPromise) {
-    redirectResultPromise = getRedirectResult(auth).finally(() => {
-      redirectResultPromise = null;
-    });
+    redirectResultPromise = getRedirectResult(auth)
+      .finally(() => {
+        clearRedirectPending();
+        redirectResultPromise = null;
+      });
   }
 
   return redirectResultPromise;
@@ -85,32 +110,19 @@ const REDIRECT_FALLBACK_ERRORS = new Set([
   'auth/popup-closed-by-user',
   'auth/cancelled-popup-request',
   'auth/operation-not-supported-in-this-environment',
-  'auth/internal-error',
 ]);
 
-const shouldPreferRedirectSignIn = () => {
-  if (typeof window === 'undefined') return false;
-
-  const userAgent = window.navigator.userAgent || '';
-  const isMobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent);
-  const isSmallTouchScreen = window.matchMedia?.('(max-width: 1024px)').matches && 'ontouchstart' in window;
-
-  return isMobileUserAgent || !!isSmallTouchScreen;
-};
+const INTERNAL_ERROR_CODE = 'auth/internal-error';
 
 export const signIn = async () => {
   if (signingIn) return null;
   signingIn = true;
 
   try {
-    if (shouldPreferRedirectSignIn()) {
-      await signInWithRedirect(auth, googleProvider);
-      return null;
-    }
-
     return await signInWithPopup(auth, googleProvider);
   } catch (err: any) {
-    if (REDIRECT_FALLBACK_ERRORS.has(err?.code)) {
+    if (REDIRECT_FALLBACK_ERRORS.has(err?.code) || err?.code === INTERNAL_ERROR_CODE) {
+      markRedirectPending();
       await signInWithRedirect(auth, googleProvider);
       return null;
     }

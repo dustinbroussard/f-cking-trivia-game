@@ -1017,8 +1017,8 @@ export default function App() {
       if (err.code === 'auth/cancelled-popup-request' || err.code === 'auth/popup-closed-by-user') {
         return;
       }
-      if (err.code === 'auth/internal-error') {
-        setError('Google sign-in failed on this browser. Please try again or open in a standard browser tab.');
+      if (err.code === 'auth/internal-error' || err.code === 'auth/operation-not-supported-in-this-environment') {
+        setError('Google sign-in failed in this browser context. If you opened this from another app, tap the menu and open in Safari/Chrome, then try again.');
         return;
       }
       setError(err.message);
