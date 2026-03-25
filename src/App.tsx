@@ -22,6 +22,11 @@ import {
 import { auth, db, signIn, finishSignInRedirect, handleFirestoreError, OperationType } from './firebase';
 import { ChatMessage, GameAnswer, GameInvite, GameState, MatchupSummary, Player, PlayerProfile, RecentCompletedGame, RecentPlayer, RoastState, TriviaQuestion, UserSettings, getPlayableCategories } from './types';
 import { QUESTION_COLLECTION } from './services/questionCollections';
+import {
+  ACTIVE_GAME_REPLENISH_MIN_APPROVED,
+  AUTO_REPLENISH_BATCH_SIZE,
+  STARTUP_REPLENISH_MIN_APPROVED,
+} from './services/questionInventoryConfig';
 import { ensureQuestionInventory, getQuestionsForSession, markQuestionSeen } from './services/questionRepository';
 import { acceptInvite, declineInvite, expireInvite, sendInvite, subscribeToIncomingInvites } from './services/invites';
 import { GameLobby } from './components/GameLobby';
@@ -445,8 +450,8 @@ export default function App() {
         ensureQuestionInventory({
           category,
           difficulty,
-          minimumApproved: 8,
-          replenishBatchSize: 4,
+          minimumApproved: STARTUP_REPLENISH_MIN_APPROVED,
+          replenishBatchSize: AUTO_REPLENISH_BATCH_SIZE,
         }).catch((err) => {
           if (import.meta.env.DEV) {
             console.warn(`[questionInventory] Failed for ${category}/${difficulty}:`, err);
@@ -1788,8 +1793,8 @@ export default function App() {
       ensureQuestionInventory({
         category: resolvedCategory,
         difficulty: q.difficulty || 'medium',
-        minimumApproved: 8,
-        replenishBatchSize: 4,
+        minimumApproved: ACTIVE_GAME_REPLENISH_MIN_APPROVED,
+        replenishBatchSize: AUTO_REPLENISH_BATCH_SIZE,
       }).catch((err) => {
         if (import.meta.env.DEV) {
           console.warn(`[questionInventory] Failed for ${resolvedCategory}/${q.difficulty || 'medium'}:`, err);
@@ -1825,8 +1830,8 @@ export default function App() {
           ensureQuestionInventory({
             category: resolvedCategory,
             difficulty: q.difficulty || 'medium',
-            minimumApproved: 8,
-            replenishBatchSize: 4,
+            minimumApproved: ACTIVE_GAME_REPLENISH_MIN_APPROVED,
+            replenishBatchSize: AUTO_REPLENISH_BATCH_SIZE,
           }).catch((err) => {
             if (import.meta.env.DEV) {
               console.warn(`[questionInventory] Failed for ${resolvedCategory}/${q.difficulty || 'medium'}:`, err);

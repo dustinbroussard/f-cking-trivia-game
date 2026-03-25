@@ -2,11 +2,11 @@ import 'dotenv/config';
 import { getAdminDb } from '../_lib/firebase-admin.js';
 import { runQuestionPipeline } from '../generate-questions.js';
 import { getPlayableCategories } from '../../src/types.js';
+import {
+  AUTO_REPLENISH_BATCH_SIZE,
+  MAINTENANCE_REPLENISH_THRESHOLD,
+} from '../../src/services/questionInventoryConfig.js';
 import { QUESTION_COLLECTION } from '../../src/services/questionCollections.js';
-
-// Configuration
-const REPLENISH_THRESHOLD = 20;
-const REPLENISH_BATCH_SIZE = 10;
 
 const db = getAdminDb();
 
@@ -59,8 +59,8 @@ export default async function handler(req: any, res: any) {
 
         const count = snapshot.data().count;
         
-        if (count < REPLENISH_THRESHOLD) {
-          console.info(`[top-up] Replenishing ${category}/${difficulty}: current count ${count} < ${REPLENISH_THRESHOLD}`);
+        if (count < MAINTENANCE_REPLENISH_THRESHOLD) {
+          console.info(`[top-up] Replenishing ${category}/${difficulty}: current count ${count} < ${MAINTENANCE_REPLENISH_THRESHOLD}`);
           
           // 2. Fetch existing questions for deduplication
           const existingQuestions = await getExistingQuestions(category);
@@ -73,7 +73,7 @@ export default async function handler(req: any, res: any) {
 
           const newQuestions = await runQuestionPipeline({
             categories: [category],
-            countPerCategory: REPLENISH_BATCH_SIZE,
+            countPerCategory: AUTO_REPLENISH_BATCH_SIZE,
             existingQuestions,
             requestedDifficulty: difficulty,
             requestUrl,
