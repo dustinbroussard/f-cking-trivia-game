@@ -32,7 +32,13 @@ async function loadFirebaseAdmin() {
     return { ...appModule, ...firestoreModule };
   } catch (error) {
     throw new Error(
-      `firebase-admin is required for this import script. Install it with "npm install firebase-admin". Original error: ${error instanceof Error ? error.message : String(error)}`
+      `Firebase Admin authentication failed: ${error instanceof Error ? error.message : String(error)}\n\n` +
+      `TO FIX THIS LOCALLY:\n` +
+      `1. Install the Google Cloud SDK (gcloud)\n` +
+      `2. Run: gcloud auth application-default login\n\n` +
+      `OR:\n` +
+      `1. Generate a Service Account JSON key in the Firebase Console (Project Settings -> Service Accounts)\n` +
+      `2. Set the environment variable: export GOOGLE_APPLICATION_CREDENTIALS="path/to/your/service-account.json"`
     );
   }
 }

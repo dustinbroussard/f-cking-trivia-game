@@ -1,8 +1,9 @@
 const QUESTION_FLAG_LINES = [
-  "Think this question kind of sucks? Flag it. We'll rough it up later.",
-  "Was this question sketchy? Mark it and we'll take a look.",
-  "Think this one was weak? Flag it and we'll interrogate it later.",
-  "Did this question feel off? Mark it. We're not above a manual beating.",
+  "Hate this question? Tag it, and we'll hurt its feelings.",
+  "This question sucks? Flag it and we'll take its lunch money.",
+  "Think this one was busted? Flag it and we'll drag it into review.",
+  "Was that question sketchy? Call it out. We'll make it explain itself.",
+  "Question felt wrong, weird, or lazy? Flag it. We'll bully it professionally.",
 ];
 
 export function getRandomQuestionFlagLine() {

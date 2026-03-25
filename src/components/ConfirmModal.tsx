@@ -6,6 +6,8 @@ interface ConfirmModalProps {
   title: string;
   message: string;
   confirmLabel: string;
+  isConfirming?: boolean;
+  zIndexClass?: string;
   onCancel: () => void;
   onConfirm: () => void;
 }
@@ -15,6 +17,8 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   title,
   message,
   confirmLabel,
+  isConfirming = false,
+  zIndexClass = 'z-50',
   onCancel,
   onConfirm,
 }) => {
@@ -27,7 +31,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 flex items-center justify-center p-4 theme-overlay backdrop-blur-sm"
+        className={`fixed inset-0 flex items-center justify-center p-4 theme-overlay backdrop-blur-sm ${zIndexClass}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-modal-title"
@@ -47,15 +51,17 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
           <div className="flex gap-3 mt-6">
             <button type="button"
               onClick={onCancel}
+              disabled={isConfirming}
               className="flex-1 px-5 py-3 rounded-xl theme-button font-bold uppercase tracking-widest text-xs"
             >
               Cancel
             </button>
             <button type="button"
               onClick={onConfirm}
-              className="flex-1 px-5 py-3 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-bold uppercase tracking-widest text-xs transition-colors"
+              disabled={isConfirming}
+              className="flex-1 px-5 py-3 rounded-xl bg-rose-500 hover:bg-rose-400 disabled:opacity-70 text-white font-bold uppercase tracking-widest text-xs transition-colors"
             >
-              {confirmLabel}
+              {isConfirming ? 'Flagging...' : confirmLabel}
             </button>
           </div>
         </motion.div>

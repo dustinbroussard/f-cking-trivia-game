@@ -88,7 +88,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
   };
 
   return (
-    <div className="w-full max-w-md mx-auto space-y-12 p-6 flex flex-col items-center">
+    <div className="w-full max-w-md mx-auto space-y-7 p-6 flex flex-col items-center">
       {/* Logo Area */}
       <div className="text-center relative">
         <div className="relative inline-block w-64 h-64 md:w-80 md:h-80">
@@ -102,9 +102,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
       </div>
 
       {/* Avatar Selection */}
-      <div className="w-full space-y-4 flex flex-col items-center">
-        <p className="text-center text-[10px] font-black uppercase tracking-widest theme-text-muted">Choose Your Fighter</p>
-
+      <div className="w-full space-y-3 flex flex-col items-center">
         <input
           type="file"
           accept="image/*"
@@ -136,16 +134,20 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
           <button
             type="button"
             onClick={() => setShowStats((current) => !current)}
-            className="h-12 rounded-xl theme-panel-strong border text-sm font-black uppercase tracking-widest transition-all duration-300"
+            aria-label={showStats ? 'Hide stats' : 'Show stats'}
+            title={showStats ? 'Hide stats' : 'Show stats'}
+            className="h-12 rounded-xl theme-panel-strong border transition-all duration-300 flex items-center justify-center"
           >
-            <span className="inline-flex items-center gap-2"><BarChart3 className="w-4 h-4" /> My Stats</span>
+            <BarChart3 className="w-5 h-5" />
           </button>
           <button
             type="button"
             onClick={() => setShowRecentPlayers((current) => !current)}
-            className="h-12 rounded-xl theme-panel-strong border text-sm font-black uppercase tracking-widest transition-all duration-300"
+            aria-label={showRecentPlayers ? 'Hide recent players' : 'Show recent players'}
+            title={showRecentPlayers ? 'Hide recent players' : 'Show recent players'}
+            className="h-12 rounded-xl theme-panel-strong border transition-all duration-300 flex items-center justify-center"
           >
-            <span className="inline-flex items-center gap-2"><Users className="w-4 h-4" /> Recent Players</span>
+            <Users className="w-5 h-5" />
           </button>
         </div>
 
