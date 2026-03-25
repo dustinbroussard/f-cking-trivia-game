@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "category": "Science",
+      "difficulty": "easy",
+      "question": "Replace this with your question text.",
+      "choices": [
+        "Choice A",
+        "Choice B",
+        "Choice C",
+        "Choice D"
+      ],
+      "correctIndex": 0,
+      "explanation": "Explain why the correct answer is right in one or two clear sentences."
+    },
+    {
+      "category": "History",
+      "difficulty": "medium",
+      "question": "Replace this with another question.",
+      "choices": [
+        "First option",
+        "Second option",
+        "Third option",
+        "Fourth option"
+      ],
+      "correctIndex": 1,
+      "explanation": "Add a factual explanation here."
+    },
+    {
+      "category": "Pop Culture",
+      "difficulty": "hard",
+      "question": "Optional styled fields can be included if you already have them.",
+      "choices": [
+        "Correct answer",
+        "Distractor one",
+        "Distractor two",
+        "Distractor three"
+      ],
+      "correctIndex": 0,
+      "explanation": "This is the plain explanation used by the importer.",
+      "questionStyled": "Optional: a styled version of the question.",
+      "explanationStyled": "Optional: a styled version of the explanation.",
+      "hostLeadIn": "Optional: short host intro."
+    }
+  ]
+}

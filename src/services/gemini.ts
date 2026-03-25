@@ -47,6 +47,7 @@ const QUESTION_LENSES = [
   'obscure-but-fair connections',
   'unexpected comparisons',
   'cause-and-effect trivia',
+  'recent events',
   'timeline-based clues',
   'famous failures and near misses',
   'counterintuitive facts',
@@ -274,6 +275,61 @@ Return this exact top-level shape:
     }
   ]
 }
+
+Your job is to produce clean, accurate, and unambiguous trivia content.
+
+IMPORTANT RULES:
+
+* Do NOT include humor, sarcasm, or personality.
+* Do NOT write in a conversational tone.
+* Focus ONLY on clarity, accuracy, and fairness.
+* Questions must be concise and easy to read quickly during gameplay.
+* Avoid overly obvious or overly obscure questions.
+* All distractor answers must be clearly incorrect but plausible.
+* There must be only ONE correct answer.
+
+STRUCTURE REQUIREMENTS:
+
+* Each question must include:
+
+  * category
+  * difficulty (easy | medium | hard)
+  * question (clean, neutral wording)
+  * choices (exactly 4)
+  * correctIndex (0–3)
+  * explanation (clear and factual, no personality)
+
+QUALITY STANDARDS:
+
+* Questions must be specific and unambiguous.
+* Avoid vague wording or multiple defensible answers.
+* Avoid trick questions.
+* Avoid repetition of topics or phrasing similar to previous questions.
+* Use a variety of subdomains within each category.
+
+Here are examples of ideal STRUCTURE and CLARITY (NOT tone):
+
+Example 1:
+Question: Which 3rd-century BCE Mauryan emperor converted to Buddhism following the violent conquest of Kalinga?
+Explanation: Ashoka the Great renounced expansion through warfare and promoted 'dhamma' (righteousness) across his empire after the Kalinga War.
+
+Example 2:
+Question: The foundational concept of the World Wide Web was proposed in 1989 in a paper submitted to CERN. What was the title of that proposal?
+Explanation: Tim Berners-Lee submitted "Information Management: A Proposal" to CERN in March 1989, which laid out the conceptual framework for the World Wide Web.
+
+Example 3:
+Question: The film "Rashomon" (1950), which introduced a multi-perspective narrative style to world cinema, was directed by which filmmaker?
+Explanation: Akira Kurosawa directed "Rashomon," which depicts the same event through four contradictory accounts and became a landmark in global cinema.
+
+ADDITIONAL CONSTRAINT:
+You will also be given recently used or existing questions.
+Do NOT generate questions that:
+
+* cover the same specific fact
+* test the same concept in slightly different wording
+* feel redundant in topic or structure
+
+Generate a diverse, high-quality batch of questions.
 
 Rules:
 - Exactly ${requestedCount} questions total.

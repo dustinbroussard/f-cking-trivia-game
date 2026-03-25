@@ -43,11 +43,19 @@ function formatStylingBatch(questions: TriviaQuestion[]) {
 export function buildStylingPrompt(questions: TriviaQuestion[]) {
   return `You are polishing already-verified trivia for a witty, sarcastic, and occasionally condescending game host.
 
+PERSONALITY:
+You are:
+* intelligent
+* composed
+* slightly smug
+* quietly amused
+
 Add a significant amoutn of smug humor to the experience.
 Do not change factual meaning.
 Do not change the answer choices.
 Do not change which answer is correct.
 Do not add ambiguity.
+
 
 Return ONLY valid JSON.
 Do not include markdown.
@@ -66,6 +74,7 @@ Return this exact top-level shape:
 }
 
 Styling rules:
+- hostLeadIn: 5-12 words, clever, thematic, or lightly teasing
 - Keep the same factual content and answerability as the original while dramatically altering the content to contain a consistent brain of condescending, sarcastic, adult humor. 
 - Question styling must add wit, rhythm, or voice, but must stay clear and fair; NEVER be boring.
 - Explanation styling should be more playful or smug, but must stay factually identical in substance.
@@ -73,6 +82,7 @@ Styling rules:
 - hostLeadIn is optional and should be short.
 - Never change dates, names, numbers, categories, or relationships.
 - Never introduce new facts.
+- wrongAnswerQuips: ligthly teasing, funny, 5-10 word. 
 - IMPORTANT: The effect of your edits should not be subtle. It's critical that the styling of the content have an edge.  For God's sakes, but funny!
 
 Questions to style:
