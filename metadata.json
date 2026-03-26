@@ -1,5 +1,5 @@
 {
   "name": "A F-cking Trivia Game",
-  "description": "An irreverent, fast-paced multiplayer trivia game with AI-generated roasts and 4-digit join codes.",
+  "description": "An irreverent, fast-paced multiplayer trivia game with Supabase-backed questions, AI heckles, and 4-digit join codes.",
   "requestFramePermissions": []
 }

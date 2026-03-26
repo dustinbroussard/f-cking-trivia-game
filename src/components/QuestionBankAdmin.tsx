@@ -247,7 +247,7 @@ export const QuestionBankAdmin: React.FC<QuestionBankAdminProps> = ({ isOpen, on
                           <div>
                             <p className="font-black text-lg">{question.question}</p>
                             <p className="text-sm theme-text-muted">
-                              {question.category} · {question.difficulty} · used {question.usedCount ?? question.metadata?.usedCount ?? 0}
+                              {question.category} · {question.difficulty} · used {question.metadata?.usedCount ?? 0}
                             </p>
                           </div>
                         </div>

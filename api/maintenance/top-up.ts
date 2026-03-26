@@ -6,7 +6,7 @@ export default async function handler(req: any, res: any) {
   }
 
   return res.status(410).json({
-    error: 'The legacy maintenance top-up route has been retired during the Supabase migration.',
-    nextStep: 'Replace this endpoint with a Supabase-backed admin or Edge Function before re-enabling generator tooling.',
+    error: 'The legacy maintenance top-up route has been retired.',
+    nextStep: 'Manage question inventory directly in Supabase instead of through the application.',
   });
 }

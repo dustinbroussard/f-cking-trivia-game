@@ -16,23 +16,38 @@ function normalizeRequestedCategory(category: string) {
 
 function toBankQuestion(question: any, createdAt = Date.now()): TriviaQuestion {
   const canonicalId = question.id || question.question_id;
+  const distractors = Array.isArray(question.distractors)
+    ? question.distractors.map((entry: unknown) => String(entry))
+    : [];
+  const normalizedChoices = Array.isArray(question.choices)
+    ? question.choices
+    : question.correct_answer
+      ? [question.correct_answer, ...distractors]
+      : [];
+  const normalizedCorrectIndex = question.correctIndex
+    ?? question.correct_index
+    ?? (question.correct_answer ? normalizedChoices.indexOf(question.correct_answer) : 0);
+  const normalizedStatus = question.status ?? question.validation_status ?? question.validationStatus ?? 'pending';
+  const normalizedDifficulty = question.difficulty ?? question.difficulty_level ?? 'medium';
+  const normalizedQuestionText = question.question ?? question.content ?? '';
+  const normalizedPresentation = question.presentation || {
+    questionStyled: question.questionStyled ?? question.question_styled,
+    explanationStyled: question.explanationStyled ?? question.explanation_styled,
+    hostLeadIn: question.hostLeadIn ?? question.host_lead_in,
+  };
 
   return {
     id: canonicalId,
     category: question.category,
     subcategory: question.subcategory,
-    difficulty: question.difficulty || 'medium',
-    question: question.question,
-    choices: question.choices,
-    correctIndex: question.correctIndex ?? question.correct_index,
+    difficulty: normalizedDifficulty,
+    question: normalizedQuestionText,
+    choices: normalizedChoices,
+    correctIndex: normalizedCorrectIndex >= 0 ? normalizedCorrectIndex : 0,
     explanation: question.explanation,
     tags: question.tags || [],
-    status: question.status || 'pending',
-    presentation: question.presentation || {
-      questionStyled: question.questionStyled,
-      explanationStyled: question.explanationStyled,
-      hostLeadIn: question.hostLeadIn,
-    },
+    status: normalizedStatus,
+    presentation: normalizedPresentation,
     sourceType: question.sourceType || question.source_type || 'manual',
     createdAt: question.createdAt || question.created_at || createdAt,
     metadata: {
@@ -60,7 +75,6 @@ async function fetchApprovedQuestionsByCategory(category: string, excludeIds: Se
     .from('questions')
     .select('*')
     .eq('category', category)
-    .eq('status', 'approved')
     .order('created_at', { ascending: false })
     .limit(Math.max(count * 5, 20));
 
@@ -71,6 +85,8 @@ async function fetchApprovedQuestionsByCategory(category: string, excludeIds: Se
 
   return (data || [])
     .map((entry) => toBankQuestion(entry))
+    .filter((question) => question.status === 'approved')
+    .filter((question) => question.choices.length === 4)
     .filter((question) => !excludeIds.has(question.id));
 }
 
@@ -88,7 +104,15 @@ async function loadSeenQuestionIds(userId?: string): Promise<Set<string>> {
         .select('question_id')
         .eq('user_id', userId);
 
-      if (error) throw error;
+      if (error) {
+        const fallback = await supabase
+          .from('seen_questions')
+          .select('question_id')
+          .eq('profile_id', userId);
+
+        if (fallback.error) throw error;
+        return new Set((fallback.data || []).map((entry: { question_id: string }) => entry.question_id));
+      }
       return new Set((data || []).map((entry: { question_id: string }) => entry.question_id));
     } catch (error) {
       seenQuestionIdsCache.delete(userId);
@@ -160,8 +184,20 @@ export async function markQuestionSeen({
     );
 
   if (error) {
-    console.error('Error marking question seen in Supabase:', error);
-    return;
+    const fallback = await supabase
+      .from('seen_questions')
+      .upsert(
+        {
+          profile_id: userId,
+          question_id: questionId,
+        },
+        { onConflict: 'profile_id,question_id' }
+      );
+
+    if (fallback.error) {
+      console.error('Error marking question seen in Supabase:', error);
+      return;
+    }
   }
 
   const cachedSeenQuestionIds = seenQuestionIdsCache.get(userId);

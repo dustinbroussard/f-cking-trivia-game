@@ -14,8 +14,6 @@ function createContentSecurityPolicy(isDev: boolean) {
     'https://*.googleapis.com',
     'https://*.googleusercontent.com',
     'https://www.googleapis.com',
-    'https://openrouter.ai',
-    'https://generativelanguage.googleapis.com',
   ];
 
   if (isDev) {
@@ -68,7 +66,6 @@ export default defineConfig(({ command }) => {
   const securityHeaders = createSecurityHeaders(isDevServer);
   const htmlInputs = {
     main: path.resolve(__dirname, 'index.html'),
-    generator: path.resolve(__dirname, 'generator.html'),
   };
 
   return {
@@ -96,7 +93,6 @@ export default defineConfig(({ command }) => {
           manualChunks(id) {
             if (!id.includes('node_modules')) return;
 
-            if (id.includes('@google/genai')) return 'ai';
             if (id.includes('motion') || id.includes('lucide-react') || id.includes('canvas-confetti')) {
               return 'ui-vendor';
             }

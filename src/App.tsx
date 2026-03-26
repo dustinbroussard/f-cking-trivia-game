@@ -411,7 +411,7 @@ export default function App() {
       const isNewJoiner = !gameData.playerIds.includes(user.id);
 
       if (isNewJoiner) {
-        await joinGame(gameId, user.id);
+        await joinGameById(gameId, user.id, user.displayName || 'Player', _avatarUrl);
       }
 
       setLoadingStep('finalizing_lobby');
@@ -755,8 +755,8 @@ export default function App() {
   useEffect(() => {
     if (!shouldShowOpponentHeckles || activeHeckle || heckleQueue.length > 0) return;
 
-    const opponent = players.find((player) => player.uid !== user?.uid);
-    const currentPlayer = players.find((player) => player.uid === user?.uid);
+    const opponent = players.find((player) => player.uid !== user?.id);
+    const currentPlayer = players.find((player) => player.uid === user?.id);
     if (!opponent || !user || !game) return;
 
     const turnKey = `${game.id}:${game.currentTurn}:${currentPlayer?.score ?? 0}:${opponent.score ?? 0}:${opponent.streak ?? 0}`;
@@ -789,7 +789,7 @@ export default function App() {
   }, []);
 
   const continueAfterExplanation = () => {
-    if (game?.status === 'completed' && game.winnerId === user?.uid) {
+    if (game?.status === 'completed' && game.winnerId === user?.id) {
       setQueuedSpecialEvent(null);
       clearCurrentTurnView();
       if (game.id) {
@@ -826,7 +826,7 @@ export default function App() {
   }, [settings]);
 
   useEffect(() => {
-    if (!user?.uid) {
+    if (!user?.id) {
       setRemoteSettingsResolved(true);
       return;
     }
@@ -853,10 +853,10 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [user?.uid]);
+  }, [user?.id]);
 
   useEffect(() => {
-    if (!user?.uid || !remoteSettingsResolved) return;
+    if (!user?.id || !remoteSettingsResolved) return;
 
     const serialized = JSON.stringify(settings);
     if (lastSavedRemoteSettingsRef.current === serialized) return;
@@ -870,7 +870,7 @@ export default function App() {
           console.warn('[userSettings] Failed to save remote settings:', err);
         }
       });
-  }, [settings, user?.uid, remoteSettingsResolved]);
+  }, [settings, user?.id, remoteSettingsResolved]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -1016,7 +1016,7 @@ export default function App() {
   useEffect(() => {
     if (game?.status === 'completed' && prevGameStatus.current !== 'completed') {
       if (settings.soundEnabled && settings.sfxEnabled) {
-        if (game.winnerId === user?.uid) {
+        if (game.winnerId === user?.id) {
           if (wonAudioRef.current) {
             wonAudioRef.current.currentTime = 0;
             wonAudioRef.current.play().catch(console.error);
@@ -1024,13 +1024,13 @@ export default function App() {
         }
       }
 
-      if (game.winnerId && game.winnerId !== user?.uid && !hasTriggeredMatchLossRef.current) {
+      if (game.winnerId && game.winnerId !== user?.id && !hasTriggeredMatchLossRef.current) {
         hasTriggeredMatchLossRef.current = true;
         triggerTrashTalk('MATCH_LOSS');
       }
     }
     prevGameStatus.current = game?.status || null;
-  }, [game?.status, game?.winnerId, user?.uid, settings.soundEnabled, settings.sfxEnabled, lastTrashTalkEvent]);
+  }, [game?.status, game?.winnerId, user?.id, settings.soundEnabled, settings.sfxEnabled, lastTrashTalkEvent]);
 
   useEffect(() => {
     if (game?.status !== 'abandoned') return;
@@ -1166,7 +1166,7 @@ export default function App() {
       gameId: game.id,
     });
     setResultPhase('explaining');
-  }, [game, questions, user?.uid]);
+  }, [game, questions, user?.id]);
 
   useEffect(() => {
     if (!game || !user || players.length === 0) {
@@ -1218,10 +1218,10 @@ export default function App() {
     }
 
     prevPlayersRef.current = players;
-  }, [players, game?.id, user?.uid, lastTrashTalkEvent]);
+  }, [players, game?.id, user?.id, lastTrashTalkEvent]);
 
   useEffect(() => {
-    if (!game?.id || !user?.uid || isSolo || players.length < 2) return;
+    if (!game?.id || !user?.id || isSolo || players.length < 2) return;
 
     const opponent = players.find((player) => player.uid !== user.id);
     if (!opponent) return;
@@ -1238,10 +1238,10 @@ export default function App() {
           console.warn('[recentPlayers] Failed to record:', err);
         }
       });
-  }, [game?.id, isSolo, players, user?.uid]);
+  }, [game?.id, isSolo, players, user?.id]);
 
   useEffect(() => {
-    if (!game?.id || !user?.uid || game.status !== 'active' || isSolo || players.length < 2) return;
+    if (!game?.id || !user?.id || game.status !== 'active' || isSolo || players.length < 2) return;
     if (game.currentTurn !== user.id) return;
 
     const notificationKey = `${game.id}:${game.currentTurn}:${game.status}`;
@@ -1255,7 +1255,7 @@ export default function App() {
       tag: `turn-${game.id}`,
       onClickFocusWindow: true,
     });
-  }, [game?.id, game?.currentTurn, game?.status, isSolo, logoSrc, players, user?.uid]);
+  }, [game?.id, game?.currentTurn, game?.status, isSolo, logoSrc, players, user?.id]);
 
   const handleSignIn = async () => {
     try {
@@ -1441,7 +1441,7 @@ export default function App() {
   };
 
   const handleInspectMatchup = async (player: RecentPlayer) => {
-    if (!user?.uid) return;
+    if (!user?.id) return;
 
     setIsLoadingMatchup(true);
     try {
@@ -1500,7 +1500,7 @@ export default function App() {
         categories: [resolvedCategory],
         count: 3,
         excludeQuestionIds: existingQuestionIds,
-        userId: user!.uid,
+        userId: user!.id,
       }).then(newQs => {
         if (newQs.length > 0) {
           setLoadingStep('finalizing_round');
@@ -1705,7 +1705,7 @@ export default function App() {
   };
 
   const shouldShowCurrentTurnStage = !!game && game.status === 'active' && (
-    game.currentTurn === user?.uid ||
+    game.currentTurn === user?.id ||
     !!currentQuestion ||
     !!revealedCategory ||
     resultPhase === 'revealing' ||
@@ -1713,8 +1713,8 @@ export default function App() {
     !!roast
   );
 
-  const currentPlayer = players.find((player) => player.uid === user?.uid);
-  const opponentPlayer = players.find((player) => player.uid !== user?.uid);
+  const currentPlayer = players.find((player) => player.uid === user?.id);
+  const opponentPlayer = players.find((player) => player.uid !== user?.id);
   const currentPlayerScore = currentPlayer?.score || 0;
   const opponentPlayerScore = opponentPlayer?.score || 0;
   const chatTitleRotationSeed = currentPlayerScore + opponentPlayerScore + messages.length;
@@ -1740,11 +1740,11 @@ export default function App() {
   const shouldShowMatchChat = !!game && !isSolo && (
     game.status === 'waiting' ||
     (game.status === 'active' && (
-      (game.currentTurn === user?.uid && !currentQuestion) ||
-      game.currentTurn !== user?.uid
+      (game.currentTurn === user?.id && !currentQuestion) ||
+      game.currentTurn !== user?.id
     ))
   );
-  const incomingMessageCount = messages.filter((message) => message.uid !== user?.uid).length;
+  const incomingMessageCount = messages.filter((message) => message.uid !== user?.id).length;
   const unreadIncomingMessageCount = Math.max(0, incomingMessageCount - seenIncomingMessageCount);
   const mobileChatBadgeClasses = [
     'bg-rose-500 text-white',
@@ -1912,11 +1912,11 @@ export default function App() {
           <p className="text-center theme-text-muted italic text-sm py-10">No messages yet. Say something funny.</p>
         ) : (
           messages.map(m => (
-            <div key={m.id} className={`flex gap-3 ${m.uid === user?.uid ? 'flex-row-reverse' : ''}`}>
+            <div key={m.id} className={`flex gap-3 ${m.uid === user?.id ? 'flex-row-reverse' : ''}`}>
               <div className="w-9 h-9 sm:w-10 sm:h-10 theme-avatar-surface rounded-full flex items-center justify-center text-sm shrink-0 overflow-hidden shadow-inner border">
                 {m.avatarUrl ? <img src={m.avatarUrl} alt="Avatar" className="w-full h-full object-cover" /> : '👤'}
               </div>
-              <div className={`max-w-[78%] p-3 sm:p-4 rounded-2xl text-sm shadow-md ${m.uid === user?.uid
+              <div className={`max-w-[78%] p-3 sm:p-4 rounded-2xl text-sm shadow-md ${m.uid === user?.id
                 ? 'bg-purple-600 text-white rounded-tr-sm'
                 : 'theme-soft-surface rounded-tl-sm border'
                 }`}>
@@ -2348,7 +2348,7 @@ export default function App() {
                           isCurrentTurn={game.currentTurn === p.uid}
                           score={p.score}
                           onAvatarClick={shouldShowMatchChat ? openMobileChat : undefined}
-                          unreadCount={p.uid !== user?.uid ? unreadIncomingMessageCount : 0}
+                          unreadCount={p.uid !== user?.id ? unreadIncomingMessageCount : 0}
                           unreadBadgeClassName={mobileChatBadgeClass}
                         />
                       ))}

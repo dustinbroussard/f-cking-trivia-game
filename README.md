@@ -1,6 +1,6 @@
 # A F-cking Trivia Game
 
-A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built with React, Vite, Supabase, and Gemini/OpenRouter. It mixes a game-show wheel, AI-generated question batches, live sync, lobby chat, audio cues, and sarcastic roast copy into something that feels closer to a chaotic couch competition than a polite quiz app.
+A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built with React, Vite, Supabase, and Gemini. It mixes a game-show wheel, Supabase-backed questions, live sync, lobby chat, audio cues, and sarcastic roast copy into something that feels closer to a chaotic couch competition than a polite quiz app.
 
 ## What this thing does
 
@@ -8,7 +8,7 @@ A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built w
 - **Multiplayer mode** with a 4-digit join code and shared live game state.
 - **Turn-based category wheel** so each round feels unpredictable.
 - **Win condition based on category coverage**: answer one question from each non-random category before your opponent does.
-- **AI-generated trivia and roasts** with duplicate avoidance so repeat games stay fresher.
+- **Supabase-backed trivia and AI-generated heckles** so gameplay stays database-driven without losing the app’s tone.
 - **PWA install support** with a service worker, manifest, install prompt, and standalone display mode.
 - **Lobby chat + match history** for a little more trash talk and continuity.
 
@@ -16,7 +16,7 @@ A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built w
 
 - **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, Motion
 - **State + realtime sync:** Supabase Auth + database/realtime services
-- **Content generation:** Gemini (`@google/genai`) with an OpenRouter fallback
+- **Content generation:** Gemini (`@google/genai`) for heckles
 - **PWA bits:** `manifest.webmanifest`, `sw.js`, custom install prompt
 - **Media:** local audio assets for theme, spin, win/loss, and answer feedback
 
@@ -42,7 +42,7 @@ A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built w
 │   └── icon-*.png             # install/app icons
 ├── src/
 │   ├── components/            # lobby, wheel, cards, prompts, overlays
-│   ├── services/gemini.ts     # question + roast generation
+│   ├── services/gemini.ts     # heckle generation client
 │   ├── types.ts               # shared game data contracts
 │   ├── App.tsx                # main gameplay + realtime orchestration
 │   └── main.tsx               # React entry and service worker registration
@@ -57,8 +57,7 @@ A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built w
 - Node.js 20+ recommended
 - npm
 - A Supabase project configured for auth/database access
-- A Gemini API key
-- Optional: an OpenRouter API key for fallback generation
+- A Gemini API key for heckle generation
 
 ### Installation
 
@@ -72,10 +71,7 @@ Create a local env file such as `.env.local` with:
 
 ```bash
 GEMINI_API_KEY=your_gemini_api_key
-OPENROUTER_API_KEY=your_openrouter_api_key_optional
 ```
-
-> `OPENROUTER_API_KEY` is optional, but the app will use it as a fallback if Gemini generation fails.
 
 ### Supabase configuration
 
@@ -88,20 +84,6 @@ npm run dev
 ```
 
 Vite serves the app on port `3000` by default.
-
-### Dedicated generator app
-
-This repo still exposes a separate generator-only frontend at `/generator`, but the old generator has been retired during the Supabase migration.
-
-- The current page is a retirement notice, not an operational tool.
-- `/api/maintenance/top-up` now returns a retired response instead of using the old maintenance flow.
-- Re-enable this flow only after replacing it with a Supabase-native admin path.
-
-Then open:
-
-```text
-http://localhost:3000/generator
-```
 
 ## Build and validation
 
@@ -123,15 +105,13 @@ The app stores each active match in Supabase and listens to the backing rows in 
 
 That means both players stay synced without a custom game server, which is great for speed but also means your Supabase schema and policies matter a lot.
 
-## AI generation notes
+## Question sourcing
 
-Question generation is intentionally opinionated:
+Gameplay questions are loaded from Supabase.
 
-- It asks for questions that are varied, surprising, and not obvious trivia chestnuts.
-- It tracks recent prompts and rejects overly similar question text.
-- It requests unique wrong-answer roasts and a smug correct-answer quip.
-- It retries generation up to three times.
-- If Gemini fails and `OPENROUTER_API_KEY` exists, it falls back to OpenRouter.
+- The client reads approved questions from the database during game setup and round progression.
+- This app no longer ships a frontend or API route for generating question batches.
+- If you need to add questions, seed or manage them through Supabase-admin workflows instead of the game client.
 
 ## PWA behavior
 
@@ -150,15 +130,14 @@ After reviewing the app, these are the strongest parts of the current experience
 - **Strong personality:** the tone is clear immediately and the UI commits to it.
 - **Good match readability:** wheel, score cards, active-player highlighting, and game-over state are easy to parse.
 - **Low-friction multiplayer:** short code join flow is the right call for casual head-to-head play.
-- **Question freshness work:** dedupe logic in AI generation is doing real product work, not fake checkbox work.
+- **Question control:** keeping the bank in Supabase makes content provenance and approval state easier to reason about.
 - **Installability:** the app already behaves like something people could save to a home screen and replay.
 
 ## Known rough edges worth keeping an eye on
 
 These are not necessarily bugs, but they are the places where the current build will probably feel sharpest to users:
 
-- A newly generated random spin currently requests `General` questions even though the canonical categories are otherwise fixed, so category consistency should be watched.
-- Question fetching, game creation, and replay setup are all async and can feel opaque if generation is slow.
+- Question fetching, game creation, and replay setup are all async and can feel opaque if Supabase is slow.
 - Multiplayer is best at exactly two players right now; the UX and data model are tuned for that.
 - There is no explicit rematch countdown, turn timer, or reconnect recovery messaging yet.
 
@@ -208,11 +187,11 @@ Browsers cache PWA metadata aggressively. Try this in order:
 - Confirm the current domain is allowed in your Supabase URL and redirect settings.
 - Check the browser is not blocking popups.
 
-### Questions fail to generate
+### Questions do not load
 
-- Confirm `GEMINI_API_KEY` is set.
-- If using fallback, confirm `OPENROUTER_API_KEY` is set.
-- Check browser console output for generation or Supabase errors.
+- Confirm the Supabase client variables are set.
+- Check that the question rows exist in Supabase and have the expected approval status.
+- Check browser console output for Supabase errors.
 
 ## Short version
 

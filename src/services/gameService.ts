@@ -32,24 +32,26 @@ export const subscribeToGame = (gameId: string, callback: (game: GameState) => v
 export function mapPostgresGameToState(g: any): GameState {
   return {
     id: g.id,
-    code: g.code,
+    code: g.code ?? g.join_code,
     status: g.status,
-    hostId: g.host_id,
+    hostId: g.host_id ?? g.host_profile_id,
     playerIds: g.player_ids || [],
     players: g.players || [],
-    currentTurn: g.current_turn,
+    currentTurn: g.current_turn ?? g.current_turn_profile_id,
 
-    winnerId: g.winner_id,
-    currentQuestionId: g.current_question_id,
+    winnerId: g.winner_id ?? g.winner_profile_id,
+    currentQuestionId: g.current_question_id ?? g.current_game_question_id,
     currentQuestionCategory: g.current_question_category,
     currentQuestionIndex: g.current_question_index,
-    currentQuestionStartedAt: g.current_question_started_at ? Number(g.current_question_started_at) : null,
+    currentQuestionStartedAt: g.current_question_started_at
+      ? new Date(g.current_question_started_at).getTime()
+      : null,
     questionIds: g.question_ids || [],
     answers: g.answers || {},
     finalScores: g.final_scores || {},
     categoriesUsed: g.categories_used || [],
     statsRecordedAt: g.stats_recorded_at ? new Date(g.stats_recorded_at).getTime() : undefined,
-    lastUpdated: new Date(g.last_updated).getTime(),
+    lastUpdated: new Date(g.last_updated ?? g.last_updated_at ?? g.updated_at ?? g.created_at).getTime(),
     createdAt: new Date(g.created_at).getTime(),
   };
 }
@@ -81,6 +83,7 @@ export async function createGame(
       player_ids: [hostId],
       players: [initialPlayer],
       status: isSolo ? 'active' : 'waiting',
+      current_turn: hostId,
       created_at: now,
       last_updated: now,
     })
@@ -126,6 +129,7 @@ export async function joinGameById(gameId: string, userId: string, displayName: 
       player_ids: playerIds,
       players: players,
       status: playerIds.length >= 2 ? 'active' : 'waiting',
+      current_turn: playerIds.length >= 2 ? (game.player_ids?.[0] || userId) : null,
       last_updated: new Date().toISOString(),
     })
     .eq('id', gameId);
@@ -161,6 +165,7 @@ export async function joinGame(gameId: string, userId: string) {
     .update({
       player_ids: playerIds,
       status: playerIds.length >= 2 ? 'active' : 'waiting',
+      current_turn: playerIds.length >= 2 ? (game.player_ids?.[0] || userId) : null,
       last_updated: new Date().toISOString(),
     })
     .eq('id', gameId);
@@ -327,20 +332,38 @@ export async function sendMessage(game_id: string, user_id: string, content: str
 }
 
 async function loadMessages(game_id: string) {
-  const { data, error } = await supabase
-    .from('game_messages')
-    .select('*')
-    .eq('game_id', game_id)
-    .order('timestamp', { ascending: true })
-    .limit(50);
-  
-  if (error) throw error;
-  return data.map(m => ({
-    id: m.id,
-    userId: m.user_id,
-    text: m.content,
-    timestamp: new Date(m.timestamp).getTime()
-  }));
+  const [{ data: messages, error: messagesError }, { data: game, error: gameError }] = await Promise.all([
+    supabase
+      .from('game_messages')
+      .select('*')
+      .eq('game_id', game_id)
+      .order('timestamp', { ascending: true })
+      .limit(50),
+    supabase
+      .from('games')
+      .select('players')
+      .eq('id', game_id)
+      .single(),
+  ]);
+
+  if (messagesError) throw messagesError;
+  if (gameError) throw gameError;
+
+  const playersById = new Map(
+    ((game?.players as any[]) || []).map((player) => [player.uid, player])
+  );
+
+  return (messages || []).map((m) => {
+    const player = playersById.get(m.user_id);
+    return {
+      id: m.id,
+      uid: m.user_id,
+      name: player?.name || 'Player',
+      text: m.content,
+      timestamp: new Date(m.timestamp).getTime(),
+      avatarUrl: player?.avatarUrl || undefined,
+    };
+  });
 }
 
 export async function getGameQuestions(game_id: string): Promise<TriviaQuestion[]> {
@@ -378,4 +401,3 @@ export async function getPastGames(userId: string): Promise<GameState[]> {
   if (error) throw error;
   return (data || []).map(mapPostgresGameToState);
 }
-
