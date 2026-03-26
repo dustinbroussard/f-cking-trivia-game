@@ -8,6 +8,7 @@ import {
   PlayerStatsSummary,
   RecentCompletedGame,
   RecentPlayer,
+  TriviaQuestion,
 } from '../types';
 
 const DEFAULT_STATS: PlayerStatsSummary = {
@@ -245,6 +246,18 @@ export async function removeRecentPlayer(uid: string, opponentUid: string) {
     .update({ hidden: true, updated_at: new Date().toISOString() })
     .eq('user_id', uid)
     .eq('opponent_id', opponentUid);
+  if (error) throw error;
+}
+
+export async function updateRecentPlayer(uid: string, opponentUid: string, patch: any) {
+  const { error } = await supabase
+    .from('recent_players')
+    .upsert({
+      user_id: uid,
+      opponent_id: opponentUid,
+      ...patch,
+      updated_at: new Date().toISOString()
+    });
   if (error) throw error;
 }
 

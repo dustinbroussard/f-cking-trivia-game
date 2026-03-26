@@ -10,6 +10,7 @@ export interface TriviaQuestion {
   correctIndex: number;
   explanation: string;
   tags: string[];
+  used?: boolean;
   status: 'pending' | 'verified' | 'approved' | 'rejected' | 'flagged';
   presentation: {
     questionStyled?: string;

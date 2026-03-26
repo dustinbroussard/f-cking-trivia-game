@@ -12,6 +12,12 @@ import {
   createGame,
   joinGame,
   updateGame,
+  getGameById,
+  abandonGame as abandonGameService,
+  updatePlayerActivity as updatePlayerActivityService,
+  persistQuestionsToGame as persistQuestionsToGameService,
+  setActiveGameQuestion as setActiveGameQuestionService,
+  clearActiveGameQuestion as clearActiveGameQuestionService,
 } from './services/gameService';
 
 import { ChatMessage, GameAnswer, GameInvite, GameState, MatchupSummary, Player, PlayerProfile, RecentCompletedGame, RecentPlayer, RoastState, TriviaQuestion, UserSettings, getPlayableCategories } from './types';
@@ -39,11 +45,10 @@ import { publicAsset } from './assets';
 import { motion, AnimatePresence } from 'motion/react';
 import { LogOut, RefreshCcw, Trophy, ArrowLeft, Volume2, VolumeX, Send, Loader2, History, X, Sun, Moon, SlidersHorizontal } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import confetti from 'canvas-confetti';
 import { DEFAULT_USER_SETTINGS, getLocalSettings, loadUserSettings, mergeSettings, saveLocalSettings, saveUserSettings } from './services/userSettings';
 import { generateHeckles } from './services/gemini';
 import { notifySafe, requestNotificationPermissionSafe } from './services/notify';
-import { ensurePlayerProfile, loadMatchupHistory, recordCompletedGame, recordQuestionStats, removeRecentPlayer, subscribePlayerProfile, subscribeRecentCompletedGames, subscribeRecentPlayers } from './services/playerProfiles';
+import { ensurePlayerProfile, loadMatchupHistory, recordCompletedGame, recordQuestionStats, removeRecentPlayer, subscribePlayerProfile, subscribeRecentCompletedGames, subscribeRecentPlayers, updateRecentPlayer } from './services/playerProfiles';
 
 type ResultPhase = 'idle' | 'revealing' | 'explaining' | 'specialEvent';
 type QueuedSpecialEvent =
@@ -247,7 +252,7 @@ export default function App() {
   const pendingResumeRestoreRef = useRef<string | null>(null);
   const firestoreQuotaWarningShownRef = useRef(false);
 
-  const existingQuestionIds = questions.map((question) => question.questionId || question.id);
+  const existingQuestionIds = questions.map((question) => question.id);
   const playableCategories = getPlayableCategories();
   const themeMode = settings.themeMode;
   const musicEnabled = settings.soundEnabled && settings.musicEnabled;
@@ -386,7 +391,7 @@ export default function App() {
 
   const recordRecentPlayer = async (ownerUid: string, player: Player, gameId: string) => {
     try {
-      await updatePlayer(ownerUid, player.uid, {
+      await updateRecentPlayer(ownerUid, player.uid, {
         display_name: player.name,
         photo_url: player.avatarUrl || '',
         last_played_at: new Date().toISOString(),
@@ -463,50 +468,44 @@ export default function App() {
   };
 
   const persistQuestionsToGame = async (gameId: string, sessionQuestions: TriviaQuestion[]) => {
-    for (const question of sessionQuestions) {
-      const questionId = question.questionId || question.id;
-      await setDoc(
-        doc(db, 'games', gameId, 'questions', questionId),
-        omitUndefinedFields({
-          ...question,
-          id: questionId,
-          questionId,
-        })
-      );
+    try {
+      const questionIds = sessionQuestions.map(q => q.id);
+      await persistQuestionsToGameService(gameId, questionIds);
+    } catch (err) {
+      console.error(`[persistQuestionsToGame] Failed for game ${gameId}:`, err);
     }
   };
 
   const syncGameQuestionIds = async (gameId: string, questionIds: string[]) => {
-    await updateDoc(doc(db, 'games', gameId), {
-      questionIds,
-      lastUpdated: serverTimestamp(),
-    });
+    try {
+      await updateGame(gameId, { question_ids: questionIds });
+    } catch (err) {
+      console.error(`[syncGameQuestionIds] Failed for game ${gameId}:`, err);
+    }
   };
 
   const setActiveGameQuestion = async (gameId: string, category: string, questionId: string, questionIndex: number, startedAt: number) => {
-    await updateDoc(doc(db, 'games', gameId), {
-      currentQuestionId: questionId,
-      currentQuestionCategory: category,
-      currentQuestionIndex: questionIndex,
-      currentQuestionStartedAt: startedAt,
-      lastUpdated: serverTimestamp(),
-    });
+    try {
+      await setActiveGameQuestionService(gameId, category, questionId, questionIndex, startedAt);
+    } catch (err) {
+      console.error(`[setActiveGameQuestion] Failed for game ${gameId}:`, err);
+    }
   };
 
   const clearActiveGameQuestion = async (gameId: string) => {
-    await updateDoc(doc(db, 'games', gameId), {
-      currentQuestionId: null,
-      currentQuestionCategory: null,
-      currentQuestionStartedAt: null,
-      lastUpdated: serverTimestamp(),
-    });
+    try {
+      await clearActiveGameQuestionService(gameId);
+    } catch (err) {
+      console.error(`[clearActiveGameQuestion] Failed for game ${gameId}:`, err);
+    }
   };
 
   const recordGameAnswer = async (gameId: string, questionId: string, playerUid: string, answer: GameAnswer) => {
-    await updateDoc(doc(db, 'games', gameId), {
-      [`answers.${questionId}.${playerUid}`]: answer,
-      lastUpdated: serverTimestamp(),
-    });
+    try {
+      await recordAnswer(gameId, questionId, playerUid, answer);
+    } catch (err) {
+      console.error(`[recordGameAnswer] Failed for game ${gameId}:`, err);
+    }
   };
 
   const specialEventPriority = (event: QueuedSpecialEvent) => {
@@ -731,7 +730,7 @@ export default function App() {
       categoryRevealTimeoutRef.current = null;
       if (game?.id) {
         void setActiveGameQuestion(game.id, category, question.id, questionIndex, questionStartedAt).catch((err) => {
-          handleFirestoreError(err, OperationType.UPDATE, `games/${game.id}`);
+          console.error(err);
         });
       }
     }, 1100);
@@ -870,7 +869,7 @@ export default function App() {
     clearCurrentTurnView();
     if (game?.id) {
       void clearActiveGameQuestion(game.id).catch((err) => {
-        handleFirestoreError(err, OperationType.UPDATE, `games/${game.id}`);
+        console.error(err);
       });
     }
 
@@ -1294,7 +1293,7 @@ export default function App() {
     try {
       await updatePlayerActivity(resumedGame.id, user.uid, true);
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `games/${resumedGame.id}/players/${user.uid}`);
+      console.error(err);
     }
   };
 
@@ -1311,7 +1310,7 @@ export default function App() {
     try {
       await abandonGame(resumeGameId);
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `games/${resumeGameId}`);
+      console.error(err);
       persistActiveGameId(null);
     }
   };
@@ -1539,14 +1538,14 @@ export default function App() {
         userId: user.uid,
       });
       await persistQuestionsToGame(gameId, initialQuestions);
-      await syncGameQuestionIds(gameId, initialQuestions.map((question) => question.questionId || question.id));
+      await syncGameQuestionIds(gameId, initialQuestions.map((question) => question.id));
       kickOffInventoryReplenishment(playableCategories);
       setIsFetchingQuestions(false);
       setLoadingStep('finalizing_lobby');
 
       setGame(newGame);
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `games/${gameId}`);
+      console.error(err);
       setError("Failed to start game.");
     } finally {
       setIsStartingGame(false);
@@ -1609,7 +1608,7 @@ export default function App() {
         userId: user.uid,
       });
       await persistQuestionsToGame(gameId, initialQuestions);
-      await syncGameQuestionIds(gameId, initialQuestions.map((question) => question.questionId || question.id));
+      await syncGameQuestionIds(gameId, initialQuestions.map((question) => question.id));
       kickOffInventoryReplenishment(playableCategories);
       setIsFetchingQuestions(false);
       setLoadingStep('finalizing_lobby');
@@ -1712,7 +1711,7 @@ export default function App() {
         userId: user.uid,
       });
       await persistQuestionsToGame(gameId, initialQuestions);
-      await syncGameQuestionIds(gameId, initialQuestions.map((question) => question.questionId || question.id));
+      await syncGameQuestionIds(gameId, initialQuestions.map((question) => question.id));
       kickOffInventoryReplenishment(playableCategories);
       setIsFetchingQuestions(false);
       setLoadingStep('finalizing_lobby');
@@ -1821,7 +1820,7 @@ export default function App() {
     const available = questions.filter(q => !q.used && q.category === resolvedCategory);
     if (available.length > 0) {
       const q = available[Math.floor(Math.random() * available.length)];
-      const questionId = q.questionId || q.id;
+      const questionId = q.id;
       const questionIndex = game.questionIds?.indexOf(questionId) ?? -1;
       showCategoryReveal(resolvedCategory, q, questionIndex >= 0 ? questionIndex : 0);
       ensureQuestionInventory({
@@ -1830,9 +1829,7 @@ export default function App() {
         minimumApproved: ACTIVE_GAME_REPLENISH_MIN_APPROVED,
         replenishBatchSize: AUTO_REPLENISH_BATCH_SIZE,
       }).catch((err) => {
-        if (import.meta.env.DEV) {
-          console.warn(`[questionInventory] Failed for ${resolvedCategory}/${q.difficulty || 'medium'}:`, err);
-        }
+        console.warn(`[questionInventory] Failed for ${resolvedCategory}/${q.difficulty || 'medium'}:`, err);
       });
     } else {
       // Fetch more questions if needed
@@ -1849,17 +1846,17 @@ export default function App() {
           const q = newQs[0];
           const nextQuestionIds = [
             ...(game.questionIds || []),
-            ...newQs.map((question) => question.questionId || question.id),
+            ...newQs.map((question) => question.id),
           ];
           persistQuestionsToGame(game!.id, newQs)
             .then(() => syncGameQuestionIds(game!.id, nextQuestionIds))
             .then(() => {
-              const questionId = q.questionId || q.id;
+              const questionId = q.id;
               const questionIndex = nextQuestionIds.indexOf(questionId);
               showCategoryReveal(resolvedCategory, q, questionIndex >= 0 ? questionIndex : 0);
             })
             .catch((err) => {
-              handleFirestoreError(err, OperationType.WRITE, `games/${game!.id}/questions`);
+              console.error(`[onSpinComplete] Failed for game ${game!.id}:`, err);
             });
           ensureQuestionInventory({
             category: resolvedCategory,
@@ -2046,7 +2043,7 @@ export default function App() {
         });
       }
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `games/${game.id}/action`);
+      console.error(err);
     } finally {
       if (revealTimeoutRef.current) {
         window.clearTimeout(revealTimeoutRef.current);
@@ -2198,7 +2195,7 @@ export default function App() {
         userId: user.uid,
       });
       await persistQuestionsToGame(game.id, initialQuestions);
-      const nextQuestionIds = initialQuestions.map((question) => question.questionId || question.id);
+      const nextQuestionIds = initialQuestions.map((question) => question.id);
       kickOffInventoryReplenishment(playableCategories);
       setIsFetchingQuestions(false);
       setLoadingStep('finalizing_match');
@@ -2236,7 +2233,7 @@ export default function App() {
       hasWarnedBehindRef.current = false;
       hasTriggeredMatchLossRef.current = false;
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `games/${game.id}`);
+      console.error(err);
       setError("Failed to restart game.");
     } finally {
       setIsStartingGame(false);
@@ -2261,7 +2258,7 @@ export default function App() {
       });
       setChatInput('');
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `games/${game.id}/messages`);
+      console.error(err);
       setError("Failed to send message.");
     } finally {
       setIsSendingMessage(false);
