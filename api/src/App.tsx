@@ -1970,6 +1970,9 @@ export default function App() {
   const setupLoadingCopy = getLoadingCopy(loadingStep);
   const questionLoadingCopy = getLoadingCopy(loadingStep === 'idle' ? 'loading_questions' : loadingStep);
   const isLobbyBusy = isStartingGame || isJoiningGame || isCheckingForResume;
+  const lobbyLoadingCopy = isCheckingForResume
+    ? { title: 'Checking for an active game', flow: 'Checking account state -> Looking for active matches' }
+    : setupLoadingCopy;
 
   useEffect(() => {
     if (!isMobileChatOpen) return;
@@ -2501,36 +2504,20 @@ export default function App() {
                     </div>
                   </div>
                 )}
-                {(isStartingGame || isJoiningGame) && (
-                  <div className="absolute inset-0 z-40 theme-overlay backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center">
-                    <Loader2 className="w-8 h-8 text-pink-500 animate-spin mb-4" />
-                    <p className="text-base font-bold theme-text-secondary">
-                      {setupLoadingCopy.title}
-                    </p>
-                    <p className="text-xs font-bold uppercase tracking-widest theme-text-muted mt-2 text-center">
-                      {setupLoadingCopy.flow}
-                    </p>
-                  </div>
-                )}
-                {isCheckingForResume && (
-                  <div className="absolute inset-0 z-40 theme-overlay backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center">
-                    <Loader2 className="w-8 h-8 text-cyan-400 animate-spin mb-4" />
-                    <p className="text-base font-bold theme-text-secondary">Checking for an active game</p>
-                  </div>
-                )}
                 <div
                   className={`h-full min-h-0 transition-all duration-300 ${
                     resumePrompt
                       ? 'pointer-events-none opacity-40'
-                      : isLobbyBusy
-                        ? 'pointer-events-none blur-sm scale-[0.99] opacity-70'
-                        : ''
+                      : ''
                   }`}
                 >
                   <GameLobby
                     onStartSolo={startSoloGame}
                     onStartMulti={startMultiplayerGame}
                     onJoinMulti={joinGame}
+                    isLoading={isLobbyBusy}
+                    loadingTitle={lobbyLoadingCopy.title}
+                    loadingFlow={lobbyLoadingCopy.flow}
                     recentPlayers={recentPlayers}
                     playerProfile={playerProfile}
                     recentCompletedGames={recentCompletedGames}

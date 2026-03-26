@@ -8,6 +8,9 @@ interface GameLobbyProps {
   onStartSolo: (avatarUrl: string) => void;
   onStartMulti: (avatarUrl: string) => void;
   onJoinMulti: (code: string, avatarUrl: string) => void;
+  isLoading?: boolean;
+  loadingTitle?: string;
+  loadingFlow?: string;
   recentPlayers: RecentPlayer[];
   playerProfile: PlayerProfile | null;
   recentCompletedGames: RecentCompletedGame[];
@@ -23,10 +26,15 @@ interface GameLobbyProps {
   inviteFeedback?: string | null;
 }
 
+type HomeView = 'default' | 'loading' | 'stats' | 'recentPlayers';
+
 export const GameLobby: React.FC<GameLobbyProps> = ({
   onStartSolo,
   onStartMulti,
   onJoinMulti,
+  isLoading = false,
+  loadingTitle = 'Working',
+  loadingFlow = 'Working',
   recentPlayers,
   playerProfile,
   recentCompletedGames,
@@ -45,30 +53,50 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
   const [joinCode, setJoinCode] = useState('');
   const [showJoinInput, setShowJoinInput] = useState(false);
   const [selectedAvatar, setSelectedAvatar] = useState('');
-  const [showStats, setShowStats] = useState(false);
-  const [showRecentPlayers, setShowRecentPlayers] = useState(false);
+  const [homeView, setHomeView] = useState<HomeView>('default');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const statsPanelRef = useRef<HTMLDivElement>(null);
   const recentPlayersPanelRef = useRef<HTMLDivElement>(null);
   const statsButtonRef = useRef<HTMLButtonElement>(null);
   const recentPlayersButtonRef = useRef<HTMLButtonElement>(null);
 
+  // Keep a single lobby mode so primary actions, loading, and panels stay mutually exclusive.
+  const effectiveHomeView: HomeView = isLoading ? 'loading' : homeView;
+
   useEffect(() => {
-    if (!showStats && !showRecentPlayers && !selectedMatchup) return;
+    if (selectedMatchup && homeView !== 'recentPlayers') {
+      setHomeView('recentPlayers');
+    }
+  }, [homeView, selectedMatchup]);
+
+  useEffect(() => {
+    if (!isLoading && homeView === 'loading') {
+      setHomeView('default');
+    }
+  }, [homeView, isLoading]);
+
+  useEffect(() => {
+    if (effectiveHomeView !== 'default' && showJoinInput) {
+      setShowJoinInput(false);
+    }
+  }, [effectiveHomeView, showJoinInput]);
+
+  useEffect(() => {
+    if (effectiveHomeView !== 'stats' && effectiveHomeView !== 'recentPlayers' && !selectedMatchup) return;
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
 
       const clickedStatsTrigger = statsButtonRef.current?.contains(target);
       const clickedStatsPanel = statsPanelRef.current?.contains(target);
-      if (showStats && !clickedStatsTrigger && !clickedStatsPanel) {
-        setShowStats(false);
+      if (effectiveHomeView === 'stats' && !clickedStatsTrigger && !clickedStatsPanel) {
+        setHomeView('default');
       }
 
       const clickedRecentPlayersTrigger = recentPlayersButtonRef.current?.contains(target);
       const clickedRecentPlayersPanel = recentPlayersPanelRef.current?.contains(target);
-      if ((showRecentPlayers || selectedMatchup) && !clickedRecentPlayersTrigger && !clickedRecentPlayersPanel) {
-        setShowRecentPlayers(false);
+      if ((effectiveHomeView === 'recentPlayers' || selectedMatchup) && !clickedRecentPlayersTrigger && !clickedRecentPlayersPanel) {
+        setHomeView('default');
         if (selectedMatchup) {
           onCloseMatchup();
         }
@@ -77,7 +105,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
 
     document.addEventListener('pointerdown', handlePointerDown);
     return () => document.removeEventListener('pointerdown', handlePointerDown);
-  }, [onCloseMatchup, selectedMatchup, showRecentPlayers, showStats]);
+  }, [effectiveHomeView, onCloseMatchup, selectedMatchup]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -120,7 +148,38 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
   const overallAccuracy = playerProfile?.stats.totalQuestionsSeen
     ? Math.round((playerProfile.stats.totalQuestionsCorrect / playerProfile.stats.totalQuestionsSeen) * 100)
     : 0;
-  const isShowingLobbyPanel = showStats || showRecentPlayers || !!selectedMatchup;
+  const isInteractionLocked = effectiveHomeView === 'loading';
+
+  const handleToggleStats = () => {
+    if (isInteractionLocked) return;
+    setHomeView((current) => current === 'stats' ? 'default' : 'stats');
+    if (selectedMatchup) {
+      onCloseMatchup();
+    }
+  };
+
+  const handleToggleRecentPlayers = () => {
+    if (isInteractionLocked) return;
+    setHomeView((current) => current === 'recentPlayers' ? 'default' : 'recentPlayers');
+  };
+
+  const handleStartSolo = () => {
+    if (isInteractionLocked) return;
+    setHomeView('loading');
+    onStartSolo(selectedAvatar);
+  };
+
+  const handleStartMulti = () => {
+    if (isInteractionLocked) return;
+    setHomeView('loading');
+    onStartMulti(selectedAvatar);
+  };
+
+  const handleJoinSubmit = () => {
+    if (isInteractionLocked || joinCode.length !== 4) return;
+    setHomeView('loading');
+    onJoinMulti(joinCode, selectedAvatar);
+  };
 
   return (
     <div className="w-full max-w-md mx-auto min-h-full flex flex-col items-center gap-5 px-4 pt-8 pb-3 sm:gap-6 sm:p-6">
@@ -147,8 +206,12 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
         />
 
         <button type="button"
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => {
+            if (isInteractionLocked) return;
+            fileInputRef.current?.click();
+          }}
           aria-label="Upload avatar"
+          disabled={isInteractionLocked}
           className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-2xl theme-panel-strong border-2 overflow-hidden flex items-center justify-center hover:border-pink-500 transition-all group shadow-xl hover:shadow-pink-500/20 duration-300 ease-in-out"
         >
           {selectedAvatar ? (
@@ -165,58 +228,64 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
 
       {/* Main Actions */}
       <div className="w-full space-y-3 relative">
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            ref={statsButtonRef}
-            onClick={() => {
-              setShowStats((current) => {
-                const nextShowStats = !current;
-                if (nextShowStats) {
-                  setShowRecentPlayers(false);
-                  if (selectedMatchup) {
-                    onCloseMatchup();
-                  }
-                }
-                return nextShowStats;
-              });
-            }}
-            aria-label={showStats ? 'Hide stats' : 'Show stats'}
-            title={showStats ? 'Hide stats' : 'Show stats'}
-            className="h-10 sm:h-12 rounded-xl theme-panel-strong border transition-all duration-300 flex items-center justify-center"
-          >
-            <BarChart3 className="w-5 h-5" />
-          </button>
-          <button
-            type="button"
-            ref={recentPlayersButtonRef}
-            onClick={() => {
-              setShowRecentPlayers((current) => {
-                const nextShowRecentPlayers = !current;
-                if (nextShowRecentPlayers) {
-                  setShowStats(false);
-                } else if (selectedMatchup) {
-                  onCloseMatchup();
-                }
-                return nextShowRecentPlayers;
-              });
-            }}
-            aria-label={showRecentPlayers ? 'Hide recent players' : 'Show recent players'}
-            title={showRecentPlayers ? 'Hide recent players' : 'Show recent players'}
-            className="h-10 sm:h-12 rounded-xl theme-panel-strong border transition-all duration-300 flex items-center justify-center"
-          >
-            <Users className="w-5 h-5" />
-          </button>
-        </div>
+        {effectiveHomeView === 'default' && (
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              ref={statsButtonRef}
+              onClick={handleToggleStats}
+              aria-label="Show stats"
+              title="Show stats"
+              className="h-10 sm:h-12 rounded-xl theme-panel-strong border transition-all duration-300 flex items-center justify-center"
+            >
+              <BarChart3 className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
+              ref={recentPlayersButtonRef}
+              onClick={handleToggleRecentPlayers}
+              aria-label="Show recent players"
+              title="Show recent players"
+              className="h-10 sm:h-12 rounded-xl theme-panel-strong border transition-all duration-300 flex items-center justify-center"
+            >
+              <Users className="w-5 h-5" />
+            </button>
+          </div>
+        )}
 
-        {showStats && (
+        {effectiveHomeView === 'loading' && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="w-full theme-panel-strong backdrop-blur-xl border rounded-2xl p-6 shadow-2xl"
+            role="status"
+            aria-live="polite"
+          >
+            <div className="flex flex-col items-center justify-center text-center">
+              <div className="mb-4 rounded-full border border-pink-500/30 bg-pink-500/10 p-3">
+                <div className="h-7 w-7 animate-spin rounded-full border-2 border-pink-400/30 border-t-pink-400" />
+              </div>
+              <p className="text-base font-bold theme-text-secondary">{loadingTitle}</p>
+              <p className="mt-2 text-xs font-bold uppercase tracking-widest theme-text-muted">
+                {loadingFlow}
+              </p>
+            </div>
+          </motion.div>
+        )}
+
+        {effectiveHomeView === 'stats' && (
           <div
             ref={statsPanelRef}
             className="w-full theme-panel backdrop-blur-xl border rounded-2xl p-4 sm:p-5 space-y-4 max-h-[40dvh] overflow-y-auto custom-scrollbar shadow-2xl"
           >
-            <div className="flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-cyan-400" />
-              <h4 className="text-sm font-black uppercase tracking-widest">My Stats</h4>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-cyan-400" />
+                <h4 className="text-sm font-black uppercase tracking-widest">My Stats</h4>
+              </div>
+              <button type="button" onClick={() => setHomeView('default')} className="p-2 rounded-xl theme-button" aria-label="Close stats panel">
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -291,10 +360,10 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
           </div>
         )}
 
-        {(showRecentPlayers || selectedMatchup) && (
+        {effectiveHomeView === 'recentPlayers' && (
           <div
             ref={recentPlayersPanelRef}
-            className="w-full theme-panel backdrop-blur-xl border rounded-2xl p-4 sm:p-5 space-y-4 max-h-[32dvh] overflow-y-auto custom-scrollbar shadow-2xl"
+            className="w-full theme-panel backdrop-blur-xl border rounded-2xl p-4 sm:p-5 space-y-4 max-h-[40dvh] overflow-y-auto custom-scrollbar shadow-2xl"
           >
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -307,11 +376,19 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                     {inviteFeedback}
                   </span>
                 )}
-                {selectedMatchup && (
-                  <button type="button" onClick={onCloseMatchup} className="p-2 rounded-xl theme-button" aria-label="Close matchup history">
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedMatchup) {
+                      onCloseMatchup();
+                    }
+                    setHomeView('default');
+                  }}
+                  className="p-2 rounded-xl theme-button"
+                  aria-label="Close recent players panel"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
             </div>
 
@@ -421,12 +498,12 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
           </div>
         )}
 
-        {!isShowingLobbyPanel && (
+        {effectiveHomeView === 'default' && (
           <>
             <motion.button type="button"
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              onClick={() => onStartSolo(selectedAvatar)}
+              onClick={handleStartSolo}
               aria-label="Start a solo game"
               className="w-full h-[3.25rem] sm:h-16 bg-gradient-to-r from-cyan-500 to-emerald-500 rounded-xl flex items-center justify-center gap-3 text-white font-bold text-lg sm:text-xl shadow-lg hover:shadow-cyan-500/25 transition-all duration-300 ease-in-out"
             >
@@ -437,7 +514,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
             <motion.button type="button"
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              onClick={() => onStartMulti(selectedAvatar)}
+              onClick={handleStartMulti}
               aria-label="Create a multiplayer game"
               className="w-full h-[3.25rem] sm:h-16 bg-gradient-to-r from-pink-500 to-purple-600 rounded-xl flex items-center justify-center gap-3 text-white font-bold text-lg sm:text-xl shadow-lg hover:shadow-pink-500/25 transition-all duration-300 ease-in-out"
             >
@@ -475,7 +552,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                     className="flex-1 theme-input border rounded-xl px-4 text-xl font-black text-center focus:outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 transition-all duration-300 ease-in-out shadow-inner"
                   />
                   <button type="button"
-                    onClick={() => joinCode.length === 4 && onJoinMulti(joinCode, selectedAvatar)}
+                    onClick={handleJoinSubmit}
                     aria-label="Join multiplayer game"
                     disabled={joinCode.length !== 4}
                     className="px-6 bg-pink-500 hover:bg-pink-600 rounded-xl font-black text-white uppercase disabled:opacity-50 transition-all duration-300 ease-in-out shadow-md"
@@ -496,7 +573,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
         )}
       </div>
 
-      {incomingInvites.length > 0 && (
+      {effectiveHomeView !== 'loading' && incomingInvites.length > 0 && (
         <div className="w-full theme-panel backdrop-blur-xl border rounded-2xl p-4 sm:p-5 space-y-4 max-h-[28dvh] overflow-y-auto custom-scrollbar">
           <div className="flex items-center gap-2">
             <Bell className="w-4 h-4 text-pink-500" />
