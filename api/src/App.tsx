@@ -12,16 +12,7 @@ import {
   createGame,
   joinGame,
   updateGame,
-  getGameById,
-  persistQuestionsToGame,
-  updatePlayerActivity,
-  abandonGame,
-  setActiveGameQuestion,
-  clearActiveGameQuestion,
-  subscribeToMessages,
-  getGameQuestions,
 } from './services/gameService';
-
 
 import { ChatMessage, GameAnswer, GameInvite, GameState, MatchupSummary, Player, PlayerProfile, RecentCompletedGame, RecentPlayer, RoastState, TriviaQuestion, UserSettings, getPlayableCategories } from './types';
 import { QUESTION_COLLECTION } from './services/questionCollections';
@@ -53,18 +44,7 @@ import { omitUndefinedFields } from './services/firestoreData';
 import { DEFAULT_USER_SETTINGS, getLocalSettings, loadUserSettings, mergeSettings, saveLocalSettings, saveUserSettings } from './services/userSettings';
 import { generateHeckles } from './services/gemini';
 import { notifySafe, requestNotificationPermissionSafe } from './services/notify';
-import {
-  ensurePlayerProfile,
-  loadMatchupHistory,
-  recordCompletedGame,
-  recordQuestionStats,
-  removeRecentPlayer,
-  subscribePlayerProfile,
-  subscribeRecentCompletedGames,
-  subscribeRecentPlayers,
-  updatePlayer,
-} from './services/playerProfiles';
-
+import { ensurePlayerProfile, loadMatchupHistory, recordCompletedGame, recordQuestionStats, removeRecentPlayer, subscribePlayerProfile, subscribeRecentCompletedGames, subscribeRecentPlayers } from './services/playerProfiles';
 
 type ResultPhase = 'idle' | 'revealing' | 'explaining' | 'specialEvent';
 type QueuedSpecialEvent =
@@ -278,25 +258,24 @@ export default function App() {
     (resultPhase === 'idle' || resultPhase === 'revealing' || resultPhase === 'explaining');
   const isInitializing = !hasResolvedInitialAuthState || !hasResolvedRedirectSignIn;
 
-  // This function is no longer needed as per instructions
-  // const reportFirestoreFailure = (
-  //   err: unknown,
-  //   operationType: OperationType,
-  //   path: string | null,
-  //   fallbackMessage: string,
-  // ) => {
-  //   handleFirestoreError(err, operationType, path);
+  const reportFirestoreFailure = (
+    err: unknown,
+    operationType: OperationType,
+    path: string | null,
+    fallbackMessage: string,
+  ) => {
+    handleFirestoreError(err, operationType, path);
 
-  //   if (isFirestoreQuotaExceeded(err)) {
-  //     if (!firestoreQuotaWarningShownRef.current) {
-  //       firestoreQuotaWarningShownRef.current = true;
-  //       setError(getFirestoreDisplayMessage(err, fallbackMessage));
-  //     }
-  //     return;
-  //   }
+    if (isFirestoreQuotaExceeded(err)) {
+      if (!firestoreQuotaWarningShownRef.current) {
+        firestoreQuotaWarningShownRef.current = true;
+        setError(getFirestoreDisplayMessage(err, fallbackMessage));
+      }
+      return;
+    }
 
-  //   setError(getFirestoreDisplayMessage(err, fallbackMessage));
-  // };
+    setError(getFirestoreDisplayMessage(err, fallbackMessage));
+  };
 
   const updateSettings = (patch: Partial<UserSettings>) => {
     setSettings((current) => ({
@@ -370,31 +349,37 @@ export default function App() {
     return window.localStorage.getItem(ACTIVE_GAME_STORAGE_KEY);
   };
 
+  const updatePlayerActivity = async (gameId: string, playerUid: string, isResume = false) => {
+    const activity = Date.now();
+    const playerRef = doc(db, 'games', gameId, 'players', playerUid);
+    await updateDoc(playerRef, omitUndefinedFields({
+      lastActive: activity,
+      lastResumedAt: isResume ? activity : undefined,
+    }));
+  };
+
   const abandonGame = async (gameId: string) => {
-    try {
-      const gameData = await getGameById(gameId);
-      if (!gameData) {
-        persistActiveGameId(null);
-        return;
-      }
-
-      if (gameData.status === 'completed' || gameData.status === 'abandoned') {
-        persistActiveGameId(null);
-        return;
-      }
-
-      await updateGame(gameId, {
-        status: 'abandoned',
-        current_question_id: null,
-        current_question_category: null,
-        current_question_started_at: null,
-        last_updated: new Date().toISOString(),
-      });
+    const gameRef = doc(db, 'games', gameId);
+    const gameSnapshot = await getDoc(gameRef);
+    if (!gameSnapshot.exists()) {
       persistActiveGameId(null);
-    } catch (err) {
-      console.error(`[abandonGame] Failed to abandon game ${gameId}:`, err);
-      setError('Failed to abandon game.');
+      return;
     }
+
+    const gameData = gameSnapshot.data() as GameState;
+    if (gameData.status === 'completed' || gameData.status === 'abandoned') {
+      persistActiveGameId(null);
+      return;
+    }
+
+    await updateDoc(gameRef, {
+      status: 'abandoned',
+      currentQuestionId: null,
+      currentQuestionCategory: null,
+      currentQuestionStartedAt: null,
+      lastUpdated: serverTimestamp(),
+    });
+    persistActiveGameId(null);
   };
 
   const clearResumePrompt = () => {
@@ -415,61 +400,58 @@ export default function App() {
   };
 
 
-  const recordRecentPlayer = async (ownerId: string, player: Player, gameId: string) => {
-    try {
-      await updatePlayer(ownerId, player.uid, {
-        uid: player.uid,
-        display_name: player.name,
-        photo_url: player.avatarUrl || '',
-        last_played_at: new Date().toISOString(),
-        last_game_id: gameId,
-        hidden: false,
-        updated_at: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.error(`[recordRecentPlayer] Failed to record recent player ${player.uid} for user ${ownerId}:`, err);
-      setError('Failed to record recent player.');
-    }
+  const recordRecentPlayer = async (ownerUid: string, player: Player, gameId: string) => {
+    const recentPlayerRef = doc(db, 'users', ownerUid, 'recentPlayers', player.uid);
+    await setDoc(recentPlayerRef, {
+      uid: player.uid,
+      displayName: player.name,
+      photoURL: player.avatarUrl || '',
+      lastPlayedAt: Date.now(),
+      lastGameId: gameId,
+      hidden: false,
+      updatedAt: Date.now(),
+    }, { merge: true });
   };
 
-  const joinWaitingGameById = async (gameId: string, _avatarUrl: string) => {
+  const joinWaitingGameById = async (gameId: string, avatarUrl: string) => {
     if (!user) return false;
 
-    try {
-      const gameData = await getGameById(gameId);
-      if (!gameData) {
-        setError('Invite expired. That match no longer exists.');
-        return false;
-      }
-
-      if (gameData.status !== 'waiting') {
-        setError('Invite expired. That match already started.');
-        return false;
-      }
-
-      if (gameData.playerIds.length >= 2 && !gameData.playerIds.includes(user.id)) {
-        setError('Invite expired. That match is already full.');
-        return false;
-      }
-
-      const isNewJoiner = !gameData.playerIds.includes(user.id);
-
-      if (isNewJoiner) {
-        await joinGame(gameId, user.id, user.displayName || 'Player', _avatarUrl);
-      }
-
-
-
-      setLoadingStep('finalizing_lobby');
-      setIsSolo(false);
-      return true;
-    } catch (err) {
-      console.error(`[joinWaitingGameById] Failed to join game ${gameId}:`, err);
-      setError('Failed to join game.');
+    const gameRef = doc(db, 'games', gameId);
+    const gameSnapshot = await getDoc(gameRef);
+    if (!gameSnapshot.exists()) {
+      setError('Invite expired. That match no longer exists.');
       return false;
     }
-  };
 
+    const gameData = gameSnapshot.data() as GameState;
+    if (gameData.status !== 'waiting') {
+      setError('Invite expired. That match already started.');
+      return false;
+    }
+
+    if (gameData.playerIds.length >= 2 && !gameData.playerIds.includes(user.uid)) {
+      setError('Invite expired. That match is already full.');
+      return false;
+    }
+
+    const isNewJoiner = !gameData.playerIds.includes(user.uid);
+
+    if (isNewJoiner) {
+      await joinGame(gameId, user.id);
+    }
+
+
+    setLoadingStep('finalizing_lobby');
+    setIsSolo(false);
+    setGame({
+      id: gameId,
+      ...gameData,
+      playerIds: isNewJoiner ? [...gameData.playerIds, user.uid] : gameData.playerIds,
+      status: isNewJoiner ? 'active' : gameData.status,
+      currentTurn: isNewJoiner ? user.uid : gameData.currentTurn,
+    } as GameState);
+    return true;
+  };
 
   const resolveWheelCategory = (category: string) => {
     if (category !== 'Random') return category;
@@ -499,33 +481,51 @@ export default function App() {
     });
   };
 
-  const setActiveGameQuestion = async (gameId: string, category: string, questionId: string, questionIndex: number, startedAt: number) => {
-    try {
-      await updateGame(gameId, {
-        current_question_id: questionId,
-        current_question_category: category,
-        current_question_index: questionIndex,
-        current_question_started_at: startedAt,
-        last_updated: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.error(`[setActiveGameQuestion] Failed to set active question for game ${gameId}:`, err);
-      setError('Failed to set active question.');
+  const persistQuestionsToGame = async (gameId: string, sessionQuestions: TriviaQuestion[]) => {
+    for (const question of sessionQuestions) {
+      const questionId = question.questionId || question.id;
+      await setDoc(
+        doc(db, 'games', gameId, 'questions', questionId),
+        omitUndefinedFields({
+          ...question,
+          id: questionId,
+          questionId,
+        })
+      );
     }
   };
 
+  const syncGameQuestionIds = async (gameId: string, questionIds: string[]) => {
+    await updateDoc(doc(db, 'games', gameId), {
+      questionIds,
+      lastUpdated: serverTimestamp(),
+    });
+  };
+
+  const setActiveGameQuestion = async (gameId: string, category: string, questionId: string, questionIndex: number, startedAt: number) => {
+    await updateDoc(doc(db, 'games', gameId), {
+      currentQuestionId: questionId,
+      currentQuestionCategory: category,
+      currentQuestionIndex: questionIndex,
+      currentQuestionStartedAt: startedAt,
+      lastUpdated: serverTimestamp(),
+    });
+  };
+
   const clearActiveGameQuestion = async (gameId: string) => {
-    try {
-      await updateGame(gameId, {
-        current_question_id: null,
-        current_question_category: null,
-        current_question_started_at: null,
-        last_updated: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.error(`[clearActiveGameQuestion] Failed to clear active question for game ${gameId}:`, err);
-      setError('Failed to clear active question.');
-    }
+    await updateDoc(doc(db, 'games', gameId), {
+      currentQuestionId: null,
+      currentQuestionCategory: null,
+      currentQuestionStartedAt: null,
+      lastUpdated: serverTimestamp(),
+    });
+  };
+
+  const recordGameAnswer = async (gameId: string, questionId: string, playerUid: string, answer: GameAnswer) => {
+    await updateDoc(doc(db, 'games', gameId), {
+      [`answers.${questionId}.${playerUid}`]: answer,
+      lastUpdated: serverTimestamp(),
+    });
   };
 
   const specialEventPriority = (event: QueuedSpecialEvent) => {
@@ -681,18 +681,21 @@ export default function App() {
   // Initial Auth state handling
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    const session = supabase.auth.getSession();
+    session.then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       setHasResolvedInitialAuthState(true);
-      setHasResolvedRedirectSignIn(true);
+      setHasResolvedRedirectSignIn(true); // Supabase doesn't need Firebase's finishSignInRedirect logic
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const subscription = onAuthStateChange((session) => {
       setUser(session?.user ?? null);
       setHasResolvedInitialAuthState(true);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -724,7 +727,7 @@ export default function App() {
     !!user &&
     game.status === 'active' &&
     players.length > 1 &&
-    game.currentTurn !== user.id &&
+    game.currentTurn !== user.uid &&
     !currentQuestion &&
     !revealedCategory &&
     !isHighPriorityOverlayActive;
@@ -747,8 +750,7 @@ export default function App() {
       categoryRevealTimeoutRef.current = null;
       if (game?.id) {
         void setActiveGameQuestion(game.id, category, question.id, questionIndex, questionStartedAt).catch((err) => {
-          console.error(`[setActiveGameQuestion] Failed for game ${game.id}:`, err);
-          setError('Failed to set active question.');
+          handleFirestoreError(err, OperationType.UPDATE, `games/${game.id}`);
         });
       }
     }, 1100);
@@ -838,8 +840,8 @@ export default function App() {
   useEffect(() => {
     if (!shouldShowOpponentHeckles || activeHeckle || heckleQueue.length > 0) return;
 
-    const opponent = players.find((player) => player.uid !== user?.id);
-    const currentPlayer = players.find((player) => player.uid === user?.id);
+    const opponent = players.find((player) => player.uid !== user?.uid);
+    const currentPlayer = players.find((player) => player.uid === user?.uid);
     if (!opponent || !user || !game) return;
 
     const turnKey = `${game.id}:${game.currentTurn}:${currentPlayer?.score ?? 0}:${opponent.score ?? 0}:${opponent.streak ?? 0}`;
@@ -872,7 +874,7 @@ export default function App() {
   }, []);
 
   const continueAfterExplanation = () => {
-    if (game?.status === 'completed' && game.winnerId === user?.id) {
+    if (game?.status === 'completed' && game.winnerId === user?.uid) {
       setQueuedSpecialEvent(null);
       clearCurrentTurnView();
       if (game.id) {
@@ -887,8 +889,7 @@ export default function App() {
     clearCurrentTurnView();
     if (game?.id) {
       void clearActiveGameQuestion(game.id).catch((err) => {
-        console.error(`[clearActiveGameQuestion] Failed for game ${game.id}:`, err);
-        setError('Failed to clear active question.');
+        handleFirestoreError(err, OperationType.UPDATE, `games/${game.id}`);
       });
     }
 
@@ -910,7 +911,7 @@ export default function App() {
   }, [settings]);
 
   useEffect(() => {
-    if (!user?.id) {
+    if (!user?.uid) {
       setRemoteSettingsResolved(true);
       return;
     }
@@ -918,7 +919,7 @@ export default function App() {
     let cancelled = false;
     setRemoteSettingsResolved(false);
 
-    loadUserSettings(user.id)
+    loadUserSettings(user.uid)
       .then((remoteSettings) => {
         if (cancelled) return;
         setSettings((current) => mergeSettings(current, remoteSettings, DEFAULT_USER_SETTINGS));
@@ -927,7 +928,6 @@ export default function App() {
         if (import.meta.env.DEV) {
           console.warn('[userSettings] Failed to load remote settings:', err);
         }
-        setError('Failed to load user settings.');
       })
       .finally(() => {
         if (!cancelled) {
@@ -938,15 +938,15 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [user?.id]);
+  }, [user?.uid]);
 
   useEffect(() => {
-    if (!user?.id || !remoteSettingsResolved) return;
+    if (!user?.uid || !remoteSettingsResolved) return;
 
     const serialized = JSON.stringify(settings);
     if (lastSavedRemoteSettingsRef.current === serialized) return;
 
-    saveUserSettings(user.id, settings)
+    saveUserSettings(user.uid, settings)
       .then(() => {
         lastSavedRemoteSettingsRef.current = serialized;
       })
@@ -954,9 +954,8 @@ export default function App() {
         if (import.meta.env.DEV) {
           console.warn('[userSettings] Failed to save remote settings:', err);
         }
-        setError('Failed to save user settings.');
       });
-  }, [settings, user?.id, remoteSettingsResolved]);
+  }, [settings, user?.uid, remoteSettingsResolved]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -972,18 +971,23 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // Firebase finishSignInRedirect is no longer needed with Supabase OAuth
+    finishSignInRedirect().catch((err: any) => {
+      if (err?.code === 'auth/internal-error') {
+        setError('Google sign-in failed inside this in-app browser. Open the game in Safari/Chrome and try again.');
+        return;
+      }
+      setError(err?.message || 'Google sign-in failed.');
+    }).finally(() => {
+      setHasResolvedRedirectSignIn(true);
+    });
   }, []);
 
   useEffect(() => {
-    const subscription = onAuthStateChange((u) => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setHasResolvedInitialAuthState(true);
     });
-
-    return () => {
-      subscription.unsubscribe();
-    };
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -996,7 +1000,6 @@ export default function App() {
       if (import.meta.env.DEV) {
         console.warn('[playerProfile] Failed to ensure profile:', err);
       }
-      setError('Failed to ensure player profile.');
     });
   }, [user]);
 
@@ -1014,7 +1017,7 @@ export default function App() {
   }, [game?.id, game?.status]);
 
   useEffect(() => {
-    if (!user?.id || game || resumePrompt || isCheckingForResume) return;
+    if (!user?.uid || game || resumePrompt || isCheckingForResume) return;
 
     const storedGameId = getStoredActiveGameId();
     if (!storedGameId) return;
@@ -1022,17 +1025,18 @@ export default function App() {
     let cancelled = false;
     setIsCheckingForResume(true);
 
-    getGameById(storedGameId)
-      .then((storedGame) => {
+    getDoc(doc(db, 'games', storedGameId))
+      .then((snapshot) => {
         if (cancelled) return;
 
-        if (!storedGame) {
+        if (!snapshot.exists()) {
           persistActiveGameId(null);
           setIsCheckingForResume(false);
           return;
         }
 
-        if (storedGame.status !== 'active' || !storedGame.playerIds.includes(user.id)) {
+        const storedGame = { id: snapshot.id, ...snapshot.data() } as GameState;
+        if (storedGame.status !== 'active' || !storedGame.playerIds.includes(user.uid)) {
           persistActiveGameId(null);
           setIsCheckingForResume(false);
           return;
@@ -1047,8 +1051,7 @@ export default function App() {
       })
       .catch((err) => {
         if (!cancelled) {
-          console.error(`[resumeGame] Failed to check for resumable game ${storedGameId}:`, err);
-          setError('Failed to check for a resumable game.');
+          reportFirestoreFailure(err, OperationType.GET, `games/${storedGameId}`, 'Failed to check for a resumable game.');
           setIsCheckingForResume(false);
         }
       });
@@ -1057,6 +1060,7 @@ export default function App() {
       cancelled = true;
     };
   }, [game, isCheckingForResume, resumePrompt, user?.id]);
+
 
   useEffect(() => {
     if (!user?.id) {
@@ -1069,11 +1073,14 @@ export default function App() {
       setRecentPlayers,
       (err) => {
         setRecentPlayers([]);
-        console.error(`[recentPlayers] Failed to subscribe for user ${user.id}:`, err);
         setError('Failed to load recent players.');
+        if (import.meta.env.DEV) {
+          console.warn('[recentPlayers] Failed to subscribe:', err);
+        }
       }
     );
   }, [user?.id]);
+
 
   useEffect(() => {
     if (!user?.id) {
@@ -1086,11 +1093,14 @@ export default function App() {
       setPlayerProfile,
       (err) => {
         setPlayerProfile(null);
-        console.error(`[playerProfile] Failed to subscribe for user ${user.id}:`, err);
         setError('Failed to load your player profile.');
+        if (import.meta.env.DEV) {
+          console.warn('[playerProfile] Failed to subscribe:', err);
+        }
       }
     );
   }, [user?.id]);
+
 
   useEffect(() => {
     if (!user?.id) {
@@ -1100,19 +1110,17 @@ export default function App() {
 
     return subscribeRecentCompletedGames(
       user.id,
-      (games) => {
-        setRecentCompletedGames(games);
-        setPastGames(games as any);
-
-      },
+      setRecentCompletedGames,
       (err) => {
         setRecentCompletedGames([]);
-        console.error(`[gameHistory] Failed to subscribe for user ${user.id}:`, err);
         setError('Failed to load recent match history.');
+        if (import.meta.env.DEV) {
+          console.warn('[gameHistory] Failed to subscribe:', err);
+        }
       }
     );
-
   }, [user?.id]);
+
 
   useEffect(() => {
     if (!user?.id) {
@@ -1125,11 +1133,14 @@ export default function App() {
       setIncomingInvites,
       (err) => {
         setIncomingInvites([]);
-        console.error(`[invites] Snapshot listener failed for user ${user.id}:`, err);
         setError('Failed to load incoming invites.');
+        if (import.meta.env.DEV) {
+          console.warn('[invites] Snapshot listener failed:', err);
+        }
       }
     );
   }, [user?.id]);
+
 
   useEffect(() => {
     if (!inviteFeedback) return;
@@ -1172,21 +1183,24 @@ export default function App() {
 
   // Fetch past games history
   useEffect(() => {
-    if (!user?.id) return;
-    const unsub = subscribeRecentCompletedGames(
-      user.id,
-      (games) => {
-        setPastGames(games);
-      },
-      (err) => {
-        setPastGames([]);
-        console.error(`[gameHistory] Error fetching history for user ${user.id}:`, err);
-        setError('Failed to load match history.');
-      },
-      10 // limit
+    if (!user?.uid) return;
+    const q = query(
+      collection(db, 'games'),
+      where('playerIds', 'array-contains', user.uid),
+      where('status', '==', 'completed'),
+      orderBy('lastUpdated', 'desc'),
+      limit(10)
     );
+    const unsub = onSnapshot(q, (snapshot) => {
+      const games = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as GameState));
+      setPastGames(games);
+    }, (err) => {
+      setPastGames([]);
+      reportFirestoreFailure(err, OperationType.LIST, 'games', 'Failed to load match history.');
+      console.error("Error fetching history:", err);
+    });
     return () => unsub();
-  }, [user?.id]);
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!user) {
@@ -1213,7 +1227,7 @@ export default function App() {
   useEffect(() => {
     if (game?.status === 'completed' && prevGameStatus.current !== 'completed') {
       if (sfxEnabled) {
-        if (game.winnerId === user?.id) {
+        if (game.winnerId === user?.uid) {
           if (wonAudioRef.current) {
             wonAudioRef.current.currentTime = 0;
             wonAudioRef.current.play().catch(console.error);
@@ -1221,13 +1235,13 @@ export default function App() {
         }
       }
 
-      if (game.winnerId && game.winnerId !== user?.id && !hasTriggeredMatchLossRef.current) {
+      if (game.winnerId && game.winnerId !== user?.uid && !hasTriggeredMatchLossRef.current) {
         hasTriggeredMatchLossRef.current = true;
         triggerTrashTalk('MATCH_LOSS');
       }
     }
     prevGameStatus.current = game?.status || null;
-  }, [game?.status, game?.winnerId, user?.id, sfxEnabled, lastTrashTalkEvent]);
+  }, [game?.status, game?.winnerId, user?.uid, sfxEnabled, lastTrashTalkEvent]);
 
   useEffect(() => {
     if (game?.status !== 'abandoned') return;
@@ -1265,18 +1279,15 @@ export default function App() {
       setGame(syncedGame);
       setPlayers(syncedGame.players as Player[]);
       
+      // Load questions if they matched
       if (syncedGame.questionIds?.length > 0) {
-        getGameQuestions(game.id).then(setQuestions).catch(err => {
-          console.error('[gameQuestions] Failed to fetch:', err);
-          setError('Failed to load game questions.');
-        });
+        getGameQuestions(game.id).then(setQuestions).catch(console.error);
       }
     });
 
     const unsubMessages = subscribeToMessages(game.id, (mList) => {
       setMessages(mList as any); 
     });
-
 
     return () => {
       unsubGame();
@@ -1287,6 +1298,7 @@ export default function App() {
 
   const handleResumeGame = async () => {
     if (!resumePrompt || !user?.id) return;
+
 
     const resumedGame = resumePrompt.game;
     if (!resumePrompt.isSolo) {
@@ -1299,10 +1311,9 @@ export default function App() {
     clearResumePrompt();
 
     try {
-      await updatePlayerActivity(resumedGame.id, user.id, true);
+      await updatePlayerActivity(resumedGame.id, user.uid, true);
     } catch (err) {
-      console.error(`[updatePlayerActivity] Failed for game ${resumedGame.id}, player ${user.id}:`, err);
-      setError('Failed to update player activity.');
+      handleFirestoreError(err, OperationType.UPDATE, `games/${resumedGame.id}/players/${user.uid}`);
     }
   };
 
@@ -1319,14 +1330,14 @@ export default function App() {
     try {
       await abandonGame(resumeGameId);
     } catch (err) {
-      console.error(`[abandonGame] Failed to abandon game ${resumeGameId}:`, err);
+      handleFirestoreError(err, OperationType.UPDATE, `games/${resumeGameId}`);
       persistActiveGameId(null);
-      setError('Failed to abandon game.');
     }
   };
 
   useEffect(() => {
     if (!pendingResumeRestoreRef.current || pendingResumeRestoreRef.current !== game?.id || !user?.id) return;
+
 
     const questionOrder = game.questionIds || [];
     const currentQuestionId = game.currentQuestionId || (
@@ -1335,10 +1346,10 @@ export default function App() {
         : null
     );
 
-    const currentQuestionAnswer = currentQuestionId ? game.answers?.[currentQuestionId]?.[user.id] : undefined;
+    const currentQuestionAnswer = currentQuestionId ? game.answers?.[currentQuestionId]?.[user.uid] : undefined;
     const shouldRestoreQuestionCard =
       !!currentQuestionId &&
-      (game.currentTurn === user.id || !!currentQuestionAnswer);
+      (game.currentTurn === user.uid || !!currentQuestionAnswer);
 
     if (shouldRestoreQuestionCard && questions.length === 0) {
       return;
@@ -1379,22 +1390,18 @@ export default function App() {
       return;
     }
 
-    setSelectedAnswer(currentQuestionAnswer.correctIndex);
-    setCorrectAnswer(restoredQuestion.correctIndex);
+    setSelectedAnswer(currentQuestionAnswer.answerIndex);
+    setCorrectAnswer(restoredQuestion.answerIndex);
     setShouldBlurQuestionBackground(true);
     setRoast({
-      id: Math.random().toString(),
-      text: '',
-      targetId: user.id,
       explanation: restoredQuestion.explanation,
       isCorrect: currentQuestionAnswer.isCorrect,
       questionId: restoredQuestion.questionId || restoredQuestion.id,
-      userId: user.id,
+      userId: user.uid,
       gameId: game.id,
     });
-
     setResultPhase('explaining');
-  }, [game, questions, user?.id]);
+  }, [game, questions, user?.uid]);
 
   useEffect(() => {
     if (!game || !user || players.length === 0) {
@@ -1402,8 +1409,8 @@ export default function App() {
       return;
     }
 
-    const currentPlayer = players.find((player) => player.uid === user.id);
-    const opponent = players.find((player) => player.uid !== user.id);
+    const currentPlayer = players.find((player) => player.uid === user.uid);
+    const opponent = players.find((player) => player.uid !== user.uid);
     const previousPlayers = prevPlayersRef.current;
     const previousOpponent = previousPlayers.find((player) => player.uid === opponent?.uid);
 
@@ -1446,55 +1453,59 @@ export default function App() {
     }
 
     prevPlayersRef.current = players;
-  }, [players, game?.id, user?.id, lastTrashTalkEvent]);
+  }, [players, game?.id, user?.uid, lastTrashTalkEvent]);
 
   useEffect(() => {
-    if (!game?.id || !user?.id || isSolo || players.length < 2) return;
+    if (!game?.id || !user?.uid || isSolo || players.length < 2) return;
 
-    const opponent = players.find((player) => player.uid !== user.id);
+    const opponent = players.find((player) => player.uid !== user.uid);
     if (!opponent) return;
 
-    const pairKey = `${game.id}:${user.id}:${opponent.uid}`;
+    const pairKey = `${game.id}:${user.uid}:${opponent.uid}`;
     if (recordedRecentPairKeysRef.current.has(pairKey)) return;
     recordedRecentPairKeysRef.current.add(pairKey);
 
-    recordRecentPlayer(user.id, opponent, game.id)
+    recordRecentPlayer(user.uid, opponent, game.id)
       .then(() => undefined)
       .catch((err) => {
         recordedRecentPairKeysRef.current.delete(pairKey);
         if (import.meta.env.DEV) {
           console.warn('[recentPlayers] Failed to record:', err);
         }
-        setError('Failed to record recent player.');
       });
-  }, [game?.id, isSolo, players, user?.id]);
+  }, [game?.id, isSolo, players, user?.uid]);
 
   useEffect(() => {
-    if (!game?.id || !user?.id || game.status !== 'active' || isSolo || players.length < 2) return;
-    if (game.currentTurn !== user.id) return;
+    if (!game?.id || !user?.uid || game.status !== 'active' || isSolo || players.length < 2) return;
+    if (game.currentTurn !== user.uid) return;
 
     const notificationKey = `${game.id}:${game.currentTurn}:${game.status}`;
     if (lastTurnNotificationKeyRef.current === notificationKey) return;
     lastTurnNotificationKeyRef.current = notificationKey;
 
-    const opponent = players.find((player) => player.uid !== user.id);
+    const opponent = players.find((player) => player.uid !== user.uid);
     void notifySafe('Your turn', {
       body: opponent ? `${opponent.name} is done. Time to spin.` : 'Time to spin.',
       icon: logoSrc,
       tag: `turn-${game.id}`,
       onClickFocusWindow: true,
     });
-  }, [game?.id, game?.currentTurn, game?.status, isSolo, logoSrc, players, user?.id]);
+  }, [game?.id, game?.currentTurn, game?.status, isSolo, logoSrc, players, user?.uid]);
 
   const handleSignIn = async () => {
     try {
-      await signInWithGoogle();
+      await signIn();
     } catch (err: any) {
-      console.error('[signIn] Error:', err);
-      setError(err?.message || 'Failed to sign in.');
+      if (err.code === 'auth/cancelled-popup-request' || err.code === 'auth/popup-closed-by-user') {
+        return;
+      }
+      if (err.code === 'auth/internal-error') {
+        setError('Google sign-in failed on this browser. Please try again or open in a standard browser tab.');
+        return;
+      }
+      setError(err.message);
     }
   };
-
 
   const startSoloGame = async (avatarUrl: string) => {
     if (!user) {
@@ -1505,14 +1516,14 @@ export default function App() {
     setLoadingStep('creating_match');
     setIsSolo(true);
 
-    const gameId = `solo-${user.id}-${Date.now()}`;
+    const gameId = `solo-${user.uid}-${Date.now()}`;
     const newGame: GameState = {
       id: gameId,
       code: 'SOLO',
       status: 'active',
-      hostId: user.id,
-      playerIds: [user.id],
-      currentTurn: user.id,
+      hostId: user.uid,
+      playerIds: [user.uid],
+      currentTurn: user.uid,
       winnerId: null,
       currentQuestionId: null,
       currentQuestionCategory: null,
@@ -1520,14 +1531,12 @@ export default function App() {
       currentQuestionStartedAt: null,
       questionIds: [],
       answers: {},
-      finalScores: {},
-      categoriesUsed: [],
-      lastUpdated: new Date().toISOString()
+      createdAt: serverTimestamp(),
+      lastUpdated: serverTimestamp()
     };
 
-
     const initialPlayer: Player = {
-      uid: user.id,
+      uid: user.uid,
       name: user.displayName || 'Player 1',
       score: 0,
       streak: 0,
@@ -1537,7 +1546,8 @@ export default function App() {
     };
 
     try {
-      await createGame(newGame, initialPlayer);
+      await setDoc(doc(db, 'games', gameId), newGame);
+      await setDoc(doc(db, 'games', gameId, 'players', user.uid), initialPlayer);
 
       setIsFetchingQuestions(true);
       setLoadingStep('loading_questions');
@@ -1545,17 +1555,17 @@ export default function App() {
         categories: playableCategories,
         count: 3,
         excludeQuestionIds: existingQuestionIds,
-        userId: user.id,
+        userId: user.uid,
       });
-      await persistQuestionsToGame(gameId, initialQuestions.map((question) => question.questionId || question.id));
-
+      await persistQuestionsToGame(gameId, initialQuestions);
+      await syncGameQuestionIds(gameId, initialQuestions.map((question) => question.questionId || question.id));
       kickOffInventoryReplenishment(playableCategories);
       setIsFetchingQuestions(false);
       setLoadingStep('finalizing_lobby');
 
       setGame(newGame);
     } catch (err) {
-      console.error(`[startSoloGame] Failed to start solo game ${gameId}:`, err);
+      handleFirestoreError(err, OperationType.WRITE, `games/${gameId}`);
       setError("Failed to start game.");
     } finally {
       setIsStartingGame(false);
@@ -1581,9 +1591,9 @@ export default function App() {
       id: gameId,
       code,
       status: 'waiting',
-      hostId: user.id,
-      playerIds: [user.id],
-      currentTurn: user.id,
+      hostId: user.uid,
+      playerIds: [user.uid],
+      currentTurn: user.uid,
       winnerId: null,
       currentQuestionId: null,
       currentQuestionCategory: null,
@@ -1591,14 +1601,12 @@ export default function App() {
       currentQuestionStartedAt: null,
       questionIds: [],
       answers: {},
-      finalScores: {},
-      categoriesUsed: [],
-      lastUpdated: new Date().toISOString()
+      createdAt: serverTimestamp(),
+      lastUpdated: serverTimestamp()
     };
 
-
     const initialPlayer: Player = {
-      uid: user.id,
+      uid: user.uid,
       name: user.displayName || 'Host',
       score: 0,
       streak: 0,
@@ -1608,25 +1616,26 @@ export default function App() {
     };
 
     try {
-      await createGame(newGame, initialPlayer);
+      await setDoc(doc(db, 'games', gameId), newGame);
+      await setDoc(doc(db, 'games', gameId, 'players', user.uid), initialPlayer);
+
       setIsFetchingQuestions(true);
       setLoadingStep('loading_questions');
       const initialQuestions = await getQuestionsForSession({
         categories: playableCategories,
         count: 3,
-        excludeQuestionIds: questions.map(q => q.id),
-        userId: user.id,
+        excludeQuestionIds: existingQuestionIds,
+        userId: user.uid,
       });
-      const nextQuestionIds = initialQuestions.map((q) => q.questionId || q.id);
-      await persistQuestionsToGame(gameId, nextQuestionIds);
+      await persistQuestionsToGame(gameId, initialQuestions);
+      await syncGameQuestionIds(gameId, initialQuestions.map((question) => question.questionId || question.id));
       kickOffInventoryReplenishment(playableCategories);
       setIsFetchingQuestions(false);
       setLoadingStep('finalizing_lobby');
+
       setGame(newGame);
     } catch (err) {
-
-      console.error(`[startMultiplayerGame] Failed to start multiplayer game ${gameId}:`, err);
-      setError('Failed to start multiplayer game.');
+      reportFirestoreFailure(err, OperationType.WRITE, `games/${gameId}`, 'Failed to start multiplayer game.');
     } finally {
       setIsStartingGame(false);
       setIsFetchingQuestions(false);
@@ -1634,8 +1643,7 @@ export default function App() {
     }
   };
 
-  const handleJoinGame = async (code: string, avatarUrl: string) => {
-
+  const joinGame = async (code: string, avatarUrl: string) => {
     if (!user) {
       await handleSignIn();
       return;
@@ -1645,16 +1653,23 @@ export default function App() {
     setLoadingStep('joining_match');
 
     try {
-      const gameData = await getGameById(code, true); // Assuming getGameById can take code and search
-      if (!gameData) {
+      const q = query(
+        collection(db, 'games'),
+        where('code', '==', code),
+        where('status', '==', 'waiting'),
+        limit(1)
+      );
+      const snapshot = await getDocs(q);
+
+      if (snapshot.empty) {
         setError("Game not found or already started.");
         return;
       }
 
-      await joinWaitingGameById(gameData.id, avatarUrl);
+      const gameDoc = snapshot.docs[0];
+      await joinWaitingGameById(gameDoc.id, avatarUrl);
     } catch (err) {
-      console.error(`[joinGame] Failed to join game with code ${code}:`, err);
-      setError('Failed to join game.');
+      reportFirestoreFailure(err, OperationType.WRITE, 'games/join', 'Failed to join game.');
     } finally {
       setIsJoiningGame(false);
       setLoadingStep('idle');
@@ -1679,9 +1694,9 @@ export default function App() {
       id: gameId,
       code,
       status: 'waiting',
-      hostId: user.id,
-      playerIds: [user.id],
-      currentTurn: user.id,
+      hostId: user.uid,
+      playerIds: [user.uid],
+      currentTurn: user.uid,
       winnerId: null,
       currentQuestionId: null,
       currentQuestionCategory: null,
@@ -1689,14 +1704,12 @@ export default function App() {
       currentQuestionStartedAt: null,
       questionIds: [],
       answers: {},
-      finalScores: {},
-      categoriesUsed: [],
-      lastUpdated: new Date().toISOString()
+      createdAt: serverTimestamp(),
+      lastUpdated: serverTimestamp()
     };
 
-
     const initialPlayer: Player = {
-      uid: user.id,
+      uid: user.uid,
       name: user.displayName || 'Host',
       score: 0,
       streak: 0,
@@ -1706,7 +1719,8 @@ export default function App() {
     };
 
     try {
-      await createGame(newGame, initialPlayer);
+      await setDoc(doc(db, 'games', gameId), newGame);
+      await setDoc(doc(db, 'games', gameId, 'players', user.uid), initialPlayer);
 
       setIsFetchingQuestions(true);
       setLoadingStep('loading_questions');
@@ -1714,16 +1728,16 @@ export default function App() {
         categories: playableCategories,
         count: 3,
         excludeQuestionIds: existingQuestionIds,
-        userId: user.id,
+        userId: user.uid,
       });
-      await persistQuestionsToGame(gameId, initialQuestions.map(q => q.id));
-
+      await persistQuestionsToGame(gameId, initialQuestions);
+      await syncGameQuestionIds(gameId, initialQuestions.map((question) => question.questionId || question.id));
       kickOffInventoryReplenishment(playableCategories);
       setIsFetchingQuestions(false);
       setLoadingStep('finalizing_lobby');
 
       await sendInvite({
-        uid: user.id,
+        uid: user.uid,
         displayName: user.displayName || 'Host',
         photoURL: avatarUrl || user.photoURL || undefined,
       }, player, gameId);
@@ -1731,8 +1745,7 @@ export default function App() {
       setInviteFeedback(`Invite sent to ${player.displayName}`);
       setGame(newGame);
     } catch (err) {
-      console.error(`[inviteRecentPlayer] Failed to send invite to ${player.uid}:`, err);
-      setError('Failed to send invite.');
+      reportFirestoreFailure(err, OperationType.WRITE, `users/${player.uid}/invites`, 'Failed to send invite.');
     } finally {
       setIsStartingGame(false);
       setIsFetchingQuestions(false);
@@ -1753,15 +1766,14 @@ export default function App() {
     try {
       const joined = await joinWaitingGameById(invite.gameId, avatarUrl);
       if (!joined) {
-        await expireInvite(invite.id, user.id);
+        await expireInvite(invite.id, user.uid);
         return;
       }
 
-      await acceptInvite(invite.id, user.id);
+      await acceptInvite(invite.id, user.uid);
       setInviteFeedback(`Joined ${invite.fromDisplayName}'s match`);
     } catch (err) {
-      console.error(`[handleAcceptInvite] Failed to accept invite ${invite.id} for user ${user.id}:`, err);
-      setError('Failed to accept invite.');
+      reportFirestoreFailure(err, OperationType.WRITE, `users/${user.uid}/invites/${invite.id}`, 'Failed to accept invite.');
     } finally {
       setIsJoiningGame(false);
       setLoadingStep('idle');
@@ -1772,44 +1784,41 @@ export default function App() {
     if (!user) return;
 
     try {
-      await declineInvite(invite.id, user.id);
+      await declineInvite(invite.id, user.uid);
       setInviteFeedback(`Declined invite from ${invite.fromDisplayName}`);
     } catch (err) {
-      console.error(`[handleDeclineInvite] Failed to decline invite ${invite.id} for user ${user.id}:`, err);
-      setError('Failed to decline invite.');
+      reportFirestoreFailure(err, OperationType.WRITE, `users/${user.uid}/invites/${invite.id}`, 'Failed to decline invite.');
     }
   };
 
   const handleInspectMatchup = async (player: RecentPlayer) => {
-    if (!user?.id) return;
+    if (!user?.uid) return;
 
     setIsLoadingMatchup(true);
     try {
-      const matchup = await loadMatchupHistory(user.id, player.uid);
+      const matchup = await loadMatchupHistory(user.uid, player.uid);
       setSelectedMatchup({
         opponentId: player.uid,
         summary: matchup.summary,
         games: matchup.games,
       });
     } catch (err) {
-      console.error(`[handleInspectMatchup] Failed to load matchup history for user ${user.id} and opponent ${player.uid}:`, err);
-      setError('Failed to load matchup history.');
+      reportFirestoreFailure(err, OperationType.GET, `users/${user.uid}/matchups/${player.uid}`, 'Failed to load matchup history.');
     } finally {
       setIsLoadingMatchup(false);
     }
   };
 
   const handleRemoveRecentPlayer = async (player: RecentPlayer) => {
-    if (!user?.id) return;
+    if (!user?.uid) return;
 
     try {
-      await removeRecentPlayer(user.id, player.uid);
+      await removeRecentPlayer(user.uid, player.uid);
       if (selectedMatchup?.opponentId === player.uid) {
         setSelectedMatchup(null);
       }
     } catch (err) {
-      console.error(`[handleRemoveRecentPlayer] Failed to remove recent player ${player.uid} for user ${user.id}:`, err);
-      setError('Failed to remove recent player.');
+      reportFirestoreFailure(err, OperationType.UPDATE, `users/${user.uid}/recentPlayers/${player.uid}`, 'Failed to remove recent player.');
     }
   };
 
@@ -1836,7 +1845,7 @@ export default function App() {
       showCategoryReveal(resolvedCategory, q, questionIndex >= 0 ? questionIndex : 0);
       ensureQuestionInventory({
         category: resolvedCategory,
-        difficulty: q.difficulty as any || 'medium',
+        difficulty: q.difficulty || 'medium',
         minimumApproved: ACTIVE_GAME_REPLENISH_MIN_APPROVED,
         replenishBatchSize: AUTO_REPLENISH_BATCH_SIZE,
       }).catch((err) => {
@@ -1852,7 +1861,7 @@ export default function App() {
         categories: [resolvedCategory],
         count: 3,
         excludeQuestionIds: existingQuestionIds,
-        userId: user!.id,
+        userId: user!.uid,
       }).then(newQs => {
         if (newQs.length > 0) {
           setLoadingStep('finalizing_round');
@@ -1861,21 +1870,19 @@ export default function App() {
             ...(game.questionIds || []),
             ...newQs.map((question) => question.questionId || question.id),
           ];
-          persistQuestionsToGame(game!.id, newQs.map(q => q.id))
-            .then(() => updateGame(game!.id, { questionIds: nextQuestionIds }))
-
+          persistQuestionsToGame(game!.id, newQs)
+            .then(() => syncGameQuestionIds(game!.id, nextQuestionIds))
             .then(() => {
               const questionId = q.questionId || q.id;
               const questionIndex = nextQuestionIds.indexOf(questionId);
               showCategoryReveal(resolvedCategory, q, questionIndex >= 0 ? questionIndex : 0);
             })
             .catch((err) => {
-              console.error(`[persistQuestionsToGame] Failed for game ${game!.id}:`, err);
-              setError('Failed to persist questions.');
+              handleFirestoreError(err, OperationType.WRITE, `games/${game!.id}/questions`);
             });
           ensureQuestionInventory({
             category: resolvedCategory,
-            difficulty: q.difficulty as any || 'medium',
+            difficulty: q.difficulty || 'medium',
             minimumApproved: ACTIVE_GAME_REPLENISH_MIN_APPROVED,
             replenishBatchSize: AUTO_REPLENISH_BATCH_SIZE,
           }).catch((err) => {
@@ -1931,10 +1938,10 @@ export default function App() {
     clearQuestionTimer();
 
     setSelectedAnswer(resolvedIndex);
-    setCorrectAnswer(currentQuestion.correctIndex);
-    const isCorrect = resolvedIndex === currentQuestion.correctIndex;
+    setCorrectAnswer(currentQuestion.answerIndex);
+    const isCorrect = resolvedIndex === currentQuestion.answerIndex;
     const selectedChoice = resolvedIndex >= 0 ? currentQuestion.choices[resolvedIndex] : 'No answer before the timer expired';
-    const correctChoice = currentQuestion.choices[currentQuestion.correctIndex];
+    const correctChoice = currentQuestion.choices[currentQuestion.answerIndex];
 
     if (sfxEnabled) {
       if (isCorrect) {
@@ -1951,27 +1958,28 @@ export default function App() {
       }
     }
 
-    const currentPlayer = players.find(p => p.uid === user.id);
+    const playerRef = doc(db, 'games', game.id, 'players', user.uid);
+    const currentPlayer = players.find(p => p.uid === user.uid);
     const gameAnswer: GameAnswer = {
-      correctIndex: resolvedIndex,
+      answerIndex: resolvedIndex,
       submittedAt,
       isCorrect,
       source,
-      timeTaken: submittedAt - (game.currentQuestionStartedAt ? new Date(game.currentQuestionStartedAt as any).getTime() : Date.now()),
     };
     setResultPhase('revealing');
 
     try {
-      await recordAnswer(game.id, questionId, user.id, gameAnswer);
+      await recordGameAnswer(game.id, questionId, user.uid, gameAnswer);
       
       // Incrementally update player stats even if match isn't finished
       void recordQuestionStats({
-        userId: user.id,
+        uid: user.uid,
         category: currentQuestion.category,
         isCorrect
       }).catch(err => {
-        console.error('[playerProfile] Failed to record question stats:', err);
-        setError('Failed to record question stats.');
+        if (import.meta.env.DEV) {
+          console.warn('[playerProfile] Failed to record question stats:', err);
+        }
       });
 
       if (isCorrect) {
@@ -1979,13 +1987,10 @@ export default function App() {
         const alreadyCompleted = currentPlayer?.completedCategories.includes(currentQuestion.category);
         const earnedNewTrophy = !alreadyCompleted;
 
-        await updateGame(game.id, {
-          players: players.map(p => p.uid === user.id ? {
-            ...p,
-            score: (p.score || 0) + 1,
-            streak: newStreak,
-            completedCategories: alreadyCompleted ? p.completedCategories : [...(p.completedCategories || []), currentQuestion.category]
-          } : p)
+        await updateDoc(playerRef, {
+          score: increment(1),
+          streak: newStreak,
+          completedCategories: alreadyCompleted ? arrayUnion() : arrayUnion(currentQuestion.category)
         });
 
         if (lastAnswerCorrect && !earnedNewTrophy && !manualPickReady) {
@@ -2000,23 +2005,21 @@ export default function App() {
           setManualPickReady(false);
           setQueuedSpecialEvent(null);
           const completedAt = Date.now();
-          const winnerId = user.id;
           const finalScores = players.reduce<Record<string, number>>((scores, player) => {
-            scores[player.uid] = player.uid === user.id ? (player.score || 0) + 1 : (player.score || 0);
+            scores[player.uid] = player.uid === user.uid ? (player.score || 0) + 1 : (player.score || 0);
             return scores;
           }, {});
-          await updateGame(game.id, {
+          await updateDoc(doc(db, 'games', game.id), {
             status: 'completed',
-            winner_id: winnerId,
-            completed_at: new Date(completedAt).toISOString(),
-            final_scores: finalScores,
-            last_updated: new Date().toISOString()
+            winnerId: user.uid,
+            completedAt,
+            finalScores,
+            lastUpdated: serverTimestamp()
           });
-          
           await recordCompletedGame({
             gameId: game.id,
             players: players.map((player) => (
-              player.uid === user.id
+              player.uid === user.uid
                 ? {
                     ...player,
                     score: (player.score || 0) + 1,
@@ -2025,7 +2028,7 @@ export default function App() {
                   }
                 : player
             )),
-            winnerId: user.id,
+            winnerId: user.uid,
             finalScores,
             questions: questions.map((question) => (
               question.id === currentQuestion.id
@@ -2042,30 +2045,28 @@ export default function App() {
         lastFailureRef.current = resolvedIndex >= 0
           ? `Missed "${currentQuestion.question}" in ${currentQuestion.category}. Picked "${selectedChoice}" when the correct answer was "${correctChoice}". ${currentQuestion.explanation}`
           : `Ran out of time on "${currentQuestion.question}" in ${currentQuestion.category}. The correct answer was "${correctChoice}". ${currentQuestion.explanation}`;
-        
-        // Reset streak in game state
-        await updateGame(game.id, {
-          players: players.map(p => p.uid === user.id ? { ...p, streak: 0 } : p)
-        });
+        await updateDoc(playerRef, { streak: 0 });
 
         // End turn in multiplayer
         if (!isSolo && game.playerIds.length > 1) {
-          const nextPlayerId = game.playerIds.find(id => id !== user.id);
-          await updateGame(game.id, {
+          const nextPlayerId = game.playerIds.find(id => id !== user.uid);
+          await updateDoc(doc(db, 'games', game.id), {
             currentTurn: nextPlayerId,
-            lastUpdated: new Date().toISOString()
+            lastUpdated: serverTimestamp()
           });
         }
       }
 
-      // Mark question as used (already done in game_ids / question mapping logic usually, but let's be explicit if needed)
-      // Actually, my gameService can handle this if we add a 'used' field to the junction or similar.
-      // For now, let's just assume the flow is correct.
+      // Mark question as used
+      await updateDoc(doc(db, 'games', game.id, 'questions', currentQuestion.id), { used: true });
+      if (currentQuestion.questionId) {
+        await updateDoc(doc(db, QUESTION_COLLECTION, currentQuestion.questionId), {
+          usedCount: increment(1)
+        });
+      }
     } catch (err) {
-      console.error('[gameLoop] Action failed:', err);
-      setError('Failed to process your answer.');
+      handleFirestoreError(err, OperationType.WRITE, `games/${game.id}/action`);
     } finally {
-
       if (revealTimeoutRef.current) {
         window.clearTimeout(revealTimeoutRef.current);
       }
@@ -2077,16 +2078,12 @@ export default function App() {
 
         setShouldBlurQuestionBackground(true);
         setRoast({
-          id: Math.random().toString(),
-          text: '',
-          targetId: user.id,
           explanation: currentQuestion.explanation,
           isCorrect,
           questionId: currentQuestion.questionId || currentQuestion.id,
-          userId: user.id,
+          userId: user.uid,
           gameId: game.id,
         });
-
         setResultPhase('explaining');
       }, 650);
     }
@@ -2196,17 +2193,18 @@ export default function App() {
   };
 
   const playAgain = async () => {
-    if (!game || !user || game.hostId !== user.id) return;
+    if (!game || !user || game.hostId !== user.uid) return;
     setIsStartingGame(true);
     setLoadingStep('creating_match');
     try {
-      // Reset players in the existing game
-      const resetPlayers = players.map(p => ({
-        ...p,
-        score: 0,
-        streak: 0,
-        completedCategories: []
-      }));
+      // Reset players
+      for (const p of players) {
+        await updateDoc(doc(db, 'games', game.id, 'players', p.uid), {
+          score: 0,
+          streak: 0,
+          completedCategories: []
+        });
+      }
 
       // Generate new questions
       setIsFetchingQuestions(true);
@@ -2214,20 +2212,19 @@ export default function App() {
       const initialQuestions = await getQuestionsForSession({
         categories: playableCategories,
         count: 3,
-        excludeQuestionIds: questions.map(q => q.id),
-        userId: user.id,
+        excludeQuestionIds: existingQuestionIds,
+        userId: user.uid,
       });
-      const nextQuestionIds = initialQuestions.map((q) => q.questionId || q.id);
-      await persistQuestionsToGame(game.id, nextQuestionIds);
+      await persistQuestionsToGame(game.id, initialQuestions);
+      const nextQuestionIds = initialQuestions.map((question) => question.questionId || question.id);
       kickOffInventoryReplenishment(playableCategories);
       setIsFetchingQuestions(false);
       setLoadingStep('finalizing_match');
 
       // Reset game state
       const firstTurnPlayerId = players.find((player) => player.uid !== game.hostId)?.uid || game.hostId;
-      await updateGame(game.id, {
+      await updateDoc(doc(db, 'games', game.id), {
         status: 'active',
-        players: resetPlayers,
         currentTurn: firstTurnPlayerId,
         winnerId: null,
         currentQuestionId: null,
@@ -2236,7 +2233,7 @@ export default function App() {
         currentQuestionStartedAt: null,
         questionIds: nextQuestionIds,
         answers: {},
-        lastUpdated: new Date().toISOString()
+        lastUpdated: serverTimestamp()
       });
       setLastAnswerCorrect(false);
       setManualPickReady(false);
@@ -2257,7 +2254,7 @@ export default function App() {
       hasWarnedBehindRef.current = false;
       hasTriggeredMatchLossRef.current = false;
     } catch (err) {
-      console.error('[playAgain] Failed to restart game:', err);
+      handleFirestoreError(err, OperationType.UPDATE, `games/${game.id}`);
       setError("Failed to restart game.");
     } finally {
       setIsStartingGame(false);
@@ -2266,21 +2263,28 @@ export default function App() {
     }
   };
 
-
-  const sendMessageHandler = async () => {
+  const sendMessage = async () => {
     if (!game || !user || !chatInput.trim() || isSendingMessage) return;
     setIsSendingMessage(true);
+    const currentPlayer = players.find(p => p.uid === user.uid);
+    const messageRef = collection(db, 'games', game.id, 'messages');
+
     try {
-      await sendMessage(game.id, user.id, chatInput.trim());
+      await setDoc(doc(messageRef), {
+        uid: user.uid,
+        name: currentPlayer?.name || 'Player',
+        text: chatInput.trim(),
+        timestamp: serverTimestamp(),
+        avatarUrl: currentPlayer?.avatarUrl
+      });
       setChatInput('');
     } catch (err) {
-      console.error('[sendMessage] Failed:', err);
+      handleFirestoreError(err, OperationType.WRITE, `games/${game.id}/messages`);
       setError("Failed to send message.");
     } finally {
       setIsSendingMessage(false);
     }
   };
-
 
   const openMobileChat = () => {
     if (!shouldShowMatchChat) return;
@@ -2326,13 +2330,13 @@ export default function App() {
           type="text"
           value={chatInput}
           onChange={(e) => setChatInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') sendMessageHandler(); }}
+          onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
           placeholder="Type a message..."
           disabled={isSendingMessage}
           className="flex-1 theme-input border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all duration-300 disabled:opacity-50 theme-inset"
         />
         <button type="button"
-          onClick={sendMessageHandler}
+          onClick={sendMessage}
           disabled={isSendingMessage || !chatInput.trim()}
           className="p-3 bg-purple-600 rounded-xl hover:bg-purple-500 transition-all duration-300 disabled:opacity-50 flex items-center justify-center shadow-[0_4px_14px_0_rgba(147,51,234,0.39)] hover:shadow-[0_6px_20px_rgba(147,51,234,0.23)] active:scale-[0.96]"
         >
@@ -2625,15 +2629,14 @@ export default function App() {
                         <div key={g.id} className="theme-soft-surface border rounded-2xl p-4 flex items-center justify-between">
                           <div>
                             <p className="text-xs theme-text-muted font-medium mb-1">
-                              {g.lastUpdated ? new Date(g.lastUpdated).toLocaleDateString() : 'Unknown Date'}
-
+                              {g.lastUpdated ? new Date(g.lastUpdated.toMillis()).toLocaleDateString() : 'Unknown Date'}
                             </p>
                             <p className="text-sm font-bold">
                               {g.code === 'SOLO' ? 'Solo Game' : 'Multiplayer'}
                             </p>
                           </div>
                           <div className="text-right">
-                            {g.winnerId === user.id ? (
+                            {g.winnerId === user.uid ? (
                               <span className="inline-flex items-center gap-1 text-emerald-400 font-black text-sm uppercase tracking-wider">
                                 <Trophy className="w-4 h-4" /> Won
                               </span>
@@ -2705,8 +2708,7 @@ export default function App() {
                   <GameLobby
                     onStartSolo={startSoloGame}
                     onStartMulti={startMultiplayerGame}
-                    onJoinMulti={handleJoinGame}
-
+                    onJoinMulti={joinGame}
                     recentPlayers={recentPlayers}
                     playerProfile={playerProfile}
                     recentCompletedGames={recentCompletedGames}
@@ -2777,10 +2779,10 @@ export default function App() {
                       <div>
                         <h2 className="text-4xl font-black uppercase tracking-tight mb-2">Game Over</h2>
                         <p className="text-xl theme-text-muted">
-                          {game.winnerId === user.id ? "You actually won. Incredible." : "You lost. Shocker."}
+                          {game.winnerId === user.uid ? "You actually won. Incredible." : "You lost. Shocker."}
                         </p>
                       </div>
-                      {game.hostId === user.id ? (
+                      {game.hostId === user.uid ? (
                         <button type="button"
                           onClick={playAgain}
                           disabled={isStartingGame}

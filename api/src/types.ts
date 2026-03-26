@@ -1,32 +1,26 @@
 export type Category = 'History' | 'Science' | 'Pop Culture' | 'Art & Music' | 'Sports' | 'Technology' | 'Random';
 
 export interface TriviaQuestion {
-  id: string;
-  questionId?: string;
+  id: string; // uuid
   category: string;
+  subcategory?: string;
   difficulty: 'easy' | 'medium' | 'hard';
   question: string;
-  questionStyled?: string;
   choices: string[];
   correctIndex: number;
-  answerIndex: number;
   explanation: string;
-  explanationStyled?: string;
-  hostLeadIn?: string;
-  validationStatus: 'pending' | 'verified' | 'approved' | 'rejected' | 'flagged';
-  verificationVerdict?: 'pass' | 'reject';
-  verificationConfidence?: 'high' | 'medium' | 'low';
-  verificationIssues?: string[];
-  verificationReason?: string;
-  pipelineVersion?: string | number;
-  source?: string;
-  batchId?: string;
-  createdAt: number;
-  usedCount: number;
-  correctQuip: string;
-  wrongAnswerQuips: Record<number, string>;
-  used: boolean;
+  tags: string[];
+  status: 'pending' | 'verified' | 'approved' | 'rejected' | 'flagged';
+  presentation: {
+    questionStyled?: string;
+    explanationStyled?: string;
+    hostLeadIn?: string;
+  };
+  sourceType: string;
+  createdAt?: number | string; // Supabase uses ISO strings but app may use timestamp
+  metadata?: Record<string, any>; // For extra items like usedCount, pipelineVersion, etc.
 }
+
 
 export interface RoastState {
   explanation: string;
@@ -180,3 +174,16 @@ export const CATEGORY_COLORS: Record<string, string> = {
   'Technology': '#3B82F6', // Blue 500
   'Random': '#FFFFFF',
 };
+
+export function getQuestionText(question: TriviaQuestion): string {
+  return question.presentation?.questionStyled || question.question;
+}
+
+export function getExplanationText(question: TriviaQuestion): string {
+  return question.presentation?.explanationStyled || question.explanation;
+}
+
+export function getHostLeadIn(question: TriviaQuestion): string | undefined {
+  return question.presentation?.hostLeadIn;
+}
+

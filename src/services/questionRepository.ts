@@ -1,20 +1,6 @@
-import {
-  collection,
-  doc,
-  getCountFromServer,
-  getDocs,
-  serverTimestamp,
-  setDoc,
-  limit,
-  orderBy,
-  query,
-  where,
-} from 'firebase/firestore';
-import { db } from '../firebase';
+import { supabase } from '../lib/supabase';
 import { TriviaQuestion, getPlayableCategories, isPlayableCategory } from '../types';
-import { omitUndefinedFields } from './firestoreData';
 import { generateQuestions, getQuestionGenerationStatus } from './gemini';
-import { QUESTION_COLLECTION, SEEN_QUESTIONS_COLLECTION } from './questionCollections';
 import { validateGeneratedQuestions } from './questionValidation';
 import { isQuestionApprovedForStorage } from './questionVerification';
 
@@ -35,39 +21,41 @@ function normalizeRequestedCategory(category: string) {
   return isPlayableCategory(category) ? category : getPlayableCategories()[0];
 }
 
-function toBankQuestion(question: TriviaQuestion, createdAt = Date.now()): TriviaQuestion {
-  const canonicalId = question.questionId || question.id;
-  const explanation = question.explanation || question.correctQuip || '';
+function mapRowToTriviaQuestion(row: any): TriviaQuestion {
+  // Try to use metadata if available for exact fidelity
+  if (row.metadata && row.metadata.question) {
+    return {
+      ...row.metadata,
+      id: row.id,
+      questionId: row.id,
+      usedCount: row.used_count || 0
+    };
+  }
 
-  return omitUndefinedFields({
-    ...question,
-    id: canonicalId,
-    questionId: canonicalId,
-    category: question.category,
-    difficulty: question.difficulty || 'medium',
-    correctIndex: Number.isInteger(question.correctIndex) ? question.correctIndex : question.answerIndex,
-    answerIndex: question.answerIndex,
-    explanation,
-    validationStatus: question.validationStatus || 'pending',
-    verificationVerdict: question.verificationVerdict,
-    verificationConfidence: question.verificationConfidence,
-    verificationIssues: question.verificationIssues || [],
-    verificationReason: question.verificationReason,
-    pipelineVersion: question.pipelineVersion,
-    questionStyled: question.questionStyled,
-    explanationStyled: question.explanationStyled,
-    hostLeadIn: question.hostLeadIn,
-    source: question.source,
-    batchId: question.batchId,
-    createdAt: question.createdAt || createdAt,
-    usedCount: question.usedCount ?? 0,
-    used: question.used ?? false,
-  });
+  // Fallback to manual mapping
+  return {
+    id: row.id,
+    questionId: row.id,
+    question: row.content,
+    choices: [row.correct_answer, ...(row.distractors || [])],
+    correctIndex: 0,
+    answerIndex: 0,
+    category: row.category,
+    difficulty: row.difficulty_level || 'medium',
+    explanation: row.explanation || '',
+    status: row.validation_status === 'approved' ? 'approved' : 'pending',
+    sourceType: row.metadata?.sourceType || 'generated',
+    questionStyled: row.styling?.questionStyled,
+    explanationStyled: row.styling?.explanationStyled,
+    hostLeadIn: row.styling?.hostLeadIn,
+    batchId: row.batch_id,
+    usedCount: row.used_count || 0,
+    used: (row.used_count || 0) > 0,
+  };
 }
 
 function dedupeById(questions: TriviaQuestion[]) {
   const seen = new Set<string>();
-
   return questions.filter((question) => {
     const id = question.questionId || question.id;
     if (!id || seen.has(id)) return false;
@@ -77,22 +65,23 @@ function dedupeById(questions: TriviaQuestion[]) {
 }
 
 async function fetchApprovedQuestionsByCategory(category: string, excludeIds: Set<string>, count: number) {
-  const bankRef = collection(db, QUESTION_COLLECTION);
-  const bankQuery = query(
-    bankRef,
-    where('category', '==', category),
-    where('validationStatus', '==', 'approved'),
-    orderBy('usedCount', 'asc'),
-    orderBy('createdAt', 'asc'),
-    limit(Math.max(count * 5, 20))
-  );
+  const { data, error } = await supabase
+    .from('questions')
+    .select('*')
+    .eq('category', category)
+    .eq('validation_status', 'approved')
+    .order('used_count', { ascending: true })
+    .order('created_at', { ascending: true })
+    .limit(Math.max(count * 5, 20));
 
-  const snapshot = await getDocs(bankQuery);
-  const approved = snapshot.docs
-    .map((entry) => toBankQuestion({ ...entry.data(), id: entry.id } as TriviaQuestion))
+  if (error) {
+    console.error(`[supabaseService] Error fetching questions for ${category}:`, error.message);
+    return [];
+  }
+
+  return (data || [])
+    .map(mapRowToTriviaQuestion)
     .filter((question) => !excludeIds.has(question.id));
-
-  return approved;
 }
 
 async function loadSeenQuestionIds(userId?: string) {
@@ -102,12 +91,19 @@ async function loadSeenQuestionIds(userId?: string) {
     return new Set(await cached);
   }
 
-  const loadPromise = getDocs(collection(db, 'users', userId, SEEN_QUESTIONS_COLLECTION))
-    .then((snapshot) => new Set(snapshot.docs.map((entry) => entry.id)))
-    .catch((error) => {
-      seenQuestionIdsCache.delete(userId);
-      throw error;
-    });
+  const loadPromise = (async () => {
+    const { data, error } = await supabase
+      .from('seen_questions')
+      .select('question_id')
+      .eq('user_id', userId);
+    
+    if (error) {
+      console.error(`[supabaseService] Error loading seen questions for ${userId}:`, error.message);
+      return new Set<string>();
+    }
+    
+    return new Set((data || []).map(row => row.question_id));
+  })();
 
   seenQuestionIdsCache.set(userId, loadPromise);
   return new Set(await loadPromise);
@@ -128,137 +124,31 @@ function preferUnseenQuestions(questions: TriviaQuestion[], seenQuestionIds: Set
 }
 
 async function storeQuestionsInBank(questions: TriviaQuestion[]) {
-  for (const question of questions) {
-    const canonical = toBankQuestion(question);
-    await setDoc(doc(db, QUESTION_COLLECTION, canonical.id), canonical, { merge: true });
-  }
-}
+  const transformed = questions.map(q => ({
+    id: q.questionId || q.id || undefined,
+    content: q.question,
+    correct_answer: q.choices[q.correctIndex],
+    distractors: q.choices.filter((_, i) => i !== q.correctIndex),
+    category: q.category,
+    difficulty_level: q.difficulty || 'medium',
+    validation_status: q.validationStatus === 'approved' ? 'approved' : 'pending',
+    explanation: q.explanation || '',
+    batch_id: q.batchId,
+    styling: {
+      questionStyled: q.questionStyled,
+      explanationStyled: q.explanationStyled,
+      hostLeadIn: q.hostLeadIn
+    },
+    metadata: q
+  }));
 
-function logRejectedQuestions(rejected: Array<{ question: TriviaQuestion; reason: string }>) {
-  if (!import.meta.env.DEV || rejected.length === 0) return;
+  const { error } = await supabase
+    .from('questions')
+    .upsert(transformed, { onConflict: 'content' });
 
-  rejected.forEach(({ question, reason }) => {
-    console.warn(`[questionValidation] Rejected "${question.question || question.id}": ${reason}`);
-  });
-}
-
-function logStorageRejectedQuestions(rejected: TriviaQuestion[]) {
-  if (!import.meta.env.DEV || rejected.length === 0) return;
-
-  rejected.forEach((question) => {
-    console.warn(
-      `[questionVerification] Rejected "${question.question || question.id}": ${question.verificationReason || 'verification did not pass with high confidence'}`
-    );
-  });
-}
-
-function logInventory(message: string) {
-  if (!import.meta.env.DEV) return;
-  console.warn(`[questionInventory] ${message}`);
-}
-
-function getBucketKey(category: string, difficulty?: 'easy' | 'medium' | 'hard') {
-  return `${category}::${difficulty || 'mixed'}`;
-}
-
-function formatBucket(category: string, difficulty?: 'easy' | 'medium' | 'hard') {
-  return `${category}/${difficulty || 'mixed'}`;
-}
-
-function isBucketCoolingDown(bucketKey: string) {
-  return (bucketCooldowns.get(bucketKey) ?? 0) > Date.now();
-}
-
-function setBucketCooldown(bucketKey: string, cooldownMs = EMPTY_RESULT_COOLDOWN_MS) {
-  bucketCooldowns.set(bucketKey, Date.now() + cooldownMs);
-}
-
-/**
- * Runs the full generation pipeline for a bucket.
- * This should ideally be called from a maintenance task or background process.
- */
-async function generateApprovedQuestionsForBucket({
-  category,
-  count,
-  difficulty,
-  existingQuestions = [],
-}: {
-  category: string;
-  count: number;
-  difficulty?: 'easy' | 'medium' | 'hard';
-  existingQuestions?: Array<Pick<TriviaQuestion, 'category' | 'question'>>;
-}) {
-  const bucketKey = getBucketKey(category, difficulty);
-  const inFlight = generationLocks.get(bucketKey);
-
-  if (inFlight) {
-    logInventory(`generation skipped: bucket locked ${formatBucket(category, difficulty)}`);
-    return inFlight;
-  }
-
-  const status = getQuestionGenerationStatus();
-  if (!status.canAttemptAny) {
-    logInventory(`generation skipped: AI cooldown active ${formatBucket(category, difficulty)}`);
-    return [];
-  }
-
-  const generationPromise = (async () => {
-    const startedAt = Date.now();
-    logInventory(`generation started: bucket=${formatBucket(category, difficulty)} requested=${count} existing=${existingQuestions.length}`);
-
-    // Stage 1: Generation (handled by API handler)
-    const generated = await generateQuestions([category], count, existingQuestions, difficulty);
-
-    // Initial normalization
-    const normalizedGenerated = generated
-      .map((question) => toBankQuestion({ 
-        ...question, 
-        category, 
-        ...(difficulty ? { difficulty } : {}),
-        validationStatus: 'pending',
-        source: 'gemini-2.0-flash',
-      }))
-      .filter((question) => question.category === category)
-      .filter((question) => !difficulty || question.difficulty === difficulty);
-
-    // Stage 2: Verification and Styling are now handled server-side in the API pipeline
-    // This frontend call currently assumes the API returns styled, verified questions.
-    // We will save them with 'approved' status if they pass verification checks.
-
-    const { approved: structurallyValid, rejected } = validateGeneratedQuestions(normalizedGenerated);
-    
-    // Check verification status from the payload
-    const approved = structurallyValid.filter(isQuestionApprovedForStorage);
-    const verificationRejected = structurallyValid.filter((question) => !isQuestionApprovedForStorage(question));
-
-    logRejectedQuestions(rejected);
-    logStorageRejectedQuestions(verificationRejected);
-
-    if (approved.length > 0) {
-      // Save passing questions to the bank as 'approved'
-      await storeQuestionsInBank(approved.map((question) => ({
-        ...question,
-        validationStatus: 'approved',
-      })));
-
-      logInventory(`generation completed: bucket=${formatBucket(category, difficulty)} requested=${count} approved=${approved.length} durationMs=${Date.now() - startedAt}`);
-    } else if (!getQuestionGenerationStatus().canAttemptAny) {
-      logInventory(getQuestionGenerationStatus().message || `generation failed: both providers unavailable`);
-      setBucketCooldown(bucketKey);
-    } else {
-      logInventory(`generation produced_no_approved_questions: bucket=${formatBucket(category, difficulty)} requested=${count} generated=${generated.length} durationMs=${Date.now() - startedAt}`);
-      setBucketCooldown(bucketKey);
-    }
-
-    return approved;
-  })();
-
-  generationLocks.set(bucketKey, generationPromise);
-
-  try {
-    return await generationPromise;
-  } finally {
-    generationLocks.delete(bucketKey);
+  if (error) {
+    console.error('[supabaseService] Error storing questions:', error.message);
+    throw error;
   }
 }
 
@@ -266,39 +156,21 @@ async function fetchApprovedQuestionsByCategoryAndDifficulty(
   category: string,
   difficulty: 'easy' | 'medium' | 'hard'
 ) {
-  const bankRef = collection(db, QUESTION_COLLECTION);
-  const bankQuery = query(
-    bankRef,
-    where('category', '==', category),
-    where('difficulty', '==', difficulty),
-    where('validationStatus', '==', 'approved')
-  );
+  const { count, error } = await supabase
+    .from('questions')
+    .select('*', { count: 'exact', head: true })
+    .eq('category', category)
+    .eq('difficulty_level', difficulty)
+    .eq('validation_status', 'approved');
 
-  let attempt = 0;
-  const maxAttempts = 3;
-
-  while (attempt < maxAttempts) {
-    try {
-      const snapshot = await getCountFromServer(bankQuery);
-      return snapshot.data().count;
-    } catch (error: any) {
-      attempt++;
-      const isRateLimit = error?.code === 'resource-exhausted' || error?.message?.includes('Too Many Requests');
-      if (isRateLimit && attempt < maxAttempts) {
-        // Wait 1s, 2s, 4s...
-        await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 500));
-        continue;
-      }
-      throw error;
-    }
+  if (error) {
+    console.error(`[supabaseService] Error counting questions for ${category}/${difficulty}:`, error.message);
+    return 0;
   }
-  return 0;
+  
+  return count || 0;
 }
 
-/**
- * Checks inventory for a category/difficulty and replenishes if low.
- * This is non-blocking and safe for background execution.
- */
 export async function ensureQuestionInventory({
   category,
   difficulty,
@@ -312,44 +184,31 @@ export async function ensureQuestionInventory({
 }): Promise<void> {
   if (!isPlayableCategory(category)) return;
 
-  const bucketKey = getBucketKey(category, difficulty);
+  const bucketKey = `${category}::${difficulty}`;
   const inFlightCheck = inventoryCheckLocks.get(bucketKey);
-  if (inFlightCheck) {
-    logInventory(`inventory check skipped: bucket already checking ${formatBucket(category, difficulty)}`);
-    return inFlightCheck;
-  }
+  if (inFlightCheck) return inFlightCheck;
 
   const checkPromise = (async () => {
-    if (generationLocks.has(bucketKey)) {
-      logInventory(`generation skipped: bucket locked ${formatBucket(category, difficulty)}`);
-      return;
-    }
-
-    if (isBucketCoolingDown(bucketKey)) {
-      logInventory(`generation skipped: bucket cooldown active ${formatBucket(category, difficulty)}`);
-      return;
-    }
+    if (generationLocks.has(bucketKey)) return;
+    if ((bucketCooldowns.get(bucketKey) || 0) > Date.now()) return;
 
     const approvedCount = await fetchApprovedQuestionsByCategoryAndDifficulty(category, difficulty);
     if (approvedCount >= minimumApproved) return;
 
-    logInventory(`Low inventory ${formatBucket(category, difficulty)}: ${approvedCount}/${minimumApproved}`);
+    console.warn(`[questionInventory] Low inventory ${category}/${difficulty}: ${approvedCount}/${minimumApproved}`);
 
     const status = getQuestionGenerationStatus();
-    if (!status.canAttemptAny) {
-      logInventory(`generation skipped: AI cooldown active ${formatBucket(category, difficulty)}`);
-      return;
-    }
+    if (!status.canAttemptAny) return;
 
-    logInventory(`Replenishing ${formatBucket(category, difficulty)} with ${replenishBatchSize} questions`);
-    generateApprovedQuestionsForBucket({
-      category,
-      count: replenishBatchSize,
-      difficulty,
-    }).catch(err => {
-      setBucketCooldown(bucketKey);
-      console.error(`[questionInventory] Replenishment failed for ${formatBucket(category, difficulty)}:`, err);
-    });
+    const startedAt = Date.now();
+    const generated = await generateQuestions([category], replenishBatchSize, [], difficulty);
+    
+    // AI Pipeline writes directly to Supabase now, so we just log result
+    if (generated.length > 0) {
+      console.warn(`[questionInventory] Replenished ${category}/${difficulty} with ${generated.length} questions in ${Date.now() - startedAt}ms`);
+    } else {
+      bucketCooldowns.set(bucketKey, Date.now() + EMPTY_RESULT_COOLDOWN_MS);
+    }
   })();
 
   inventoryCheckLocks.set(bucketKey, checkPromise);
@@ -361,10 +220,6 @@ export async function ensureQuestionInventory({
   }
 }
 
-/**
- * Serves questions for a game session.
- * Strictly uses approved questions from the bank.
- */
 export async function getQuestionsForSession({
   categories,
   count,
@@ -386,11 +241,8 @@ export async function getQuestionsForSession({
     selected.push(...approved);
   }
 
-  // Deduplicate and return. We NO LONGER generate JIT if questions are missing.
-  // The UI should handle cases where fewer questions are returned if the bank is critically low.
   return dedupeById(selected);
 }
-
 
 export async function markQuestionSeen({
   userId,
@@ -401,25 +253,25 @@ export async function markQuestionSeen({
   questionId: string;
   gameId?: string;
 }) {
-  await setDoc(
-    doc(db, 'users', userId, SEEN_QUESTIONS_COLLECTION, questionId),
-    {
-      questionId,
-      seenAt: serverTimestamp(),
-      ...(gameId ? { gameId } : {}),
-    },
-    { merge: true }
-  );
+  await supabase
+    .from('seen_questions')
+    .insert({
+      user_id: userId,
+      question_id: questionId
+    });
 
-  const cachedSeenQuestionIds = seenQuestionIdsCache.get(userId);
-  if (cachedSeenQuestionIds) {
+  const cached = seenQuestionIdsCache.get(userId);
+  if (cached) {
     seenQuestionIdsCache.set(
       userId,
-      cachedSeenQuestionIds.then((ids) => {
-        const nextIds = new Set(ids);
-        nextIds.add(questionId);
-        return nextIds;
+      cached.then((ids) => {
+        const next = new Set(ids);
+        next.add(questionId);
+        return next;
       })
     );
   }
+  
+  // Also increment usage count in the bank
+  await supabase.rpc('increment_question_used_count', { q_id: questionId });
 }

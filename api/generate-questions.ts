@@ -18,6 +18,8 @@ import {
 } from '../src/services/questionVerification.js';
 import { validateGeneratedQuestions } from '../src/services/questionValidation.js';
 import type { TriviaQuestion } from '../src/types.js';
+import { supabase } from './_lib/supabase.js';
+
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
 export type PipelineStage = 'request' | 'generation' | 'verification' | 'styling' | 'response';
@@ -705,6 +707,39 @@ export default async function handler(req: any, res: any) {
     });
 
     const questions = finalizeQuestions(approvedQuestions);
+
+    // Direct to Supabase Storage Redirect
+    try {
+      const dbDrafts = questions.map(q => ({
+        id: q.id,
+        content: q.question,
+        correct_answer: q.choices[q.correctIndex],
+        distractors: q.choices.filter((_, i) => i !== q.correctIndex),
+        category: q.category,
+        difficulty_level: q.difficulty || 'medium',
+        explanation: q.explanation,
+        styling: {
+          hostLeadIn: q.hostLeadIn,
+          questionStyled: q.questionStyled,
+          explanationStyled: q.explanationStyled
+        },
+        batch_id: q.batchId,
+        metadata: { ...q }
+      }));
+
+      const { error: dbError } = await supabase
+        .from('questions')
+        .upsert(dbDrafts, { onConflict: 'content' });
+
+      if (dbError) {
+        logPipelineWarning(`[Supabase Storage] Failed to write questions: ${dbError.message}`);
+      } else {
+        logStage(context, 'response', 'stored_in_supabase', { count: dbDrafts.length });
+      }
+    } catch (saveError) {
+      logPipelineWarning(`[Supabase Storage] Unexpected error: ${getErrorMessage(saveError)}`);
+    }
+
     logStage(context, 'response', 'sent', { status: 200, questions: questions.length });
     res.status(200).json({
       questions,
@@ -712,6 +747,7 @@ export default async function handler(req: any, res: any) {
     });
     return;
   } catch (error) {
+
     if (isRateLimitError(error)) {
       const retryAfterMs = (error as Error & { retryAfterMs?: number | null }).retryAfterMs
         ?? extractRetryDelayMs(getErrorMessage(error));

@@ -1,0 +1,23 @@
+{
+  "id": "uuid",
+  "category": "Science",
+  "subcategory": "Astronomy",
+  "difficulty": "easy",
+  "question": "Which planet is known as the Red Planet?",
+  "choices": [
+    "Venus",
+    "Mars",
+    "Jupiter",
+    "Mercury"
+  ],
+  "correctIndex": 1,
+  "explanation": "Mars is called the Red Planet because iron oxide on its surface gives it a reddish color.",
+  "tags": ["planets", "solar system"],
+  "status": "approved",
+  "presentation": {
+    "questionStyled": "Which planet is known as the <b>Red Planet</b>?",
+    "explanationStyled": "Mars appears red because of iron oxide, or rust, on its surface.",
+    "hostLeadIn": "Here’s an easy one."
+  },
+  "sourceType": "ai"
+}
