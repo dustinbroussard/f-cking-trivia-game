@@ -1,53 +1,110 @@
+export type Category = 'History' | 'Science' | 'Pop Culture' | 'Art & Music' | 'Sports' | 'Technology' | 'Random';
+
 export interface TriviaQuestion {
-  id: string;
+  id: string; // uuid
   category: string;
   subcategory?: string;
-  difficulty: string;
+  difficulty: 'easy' | 'medium' | 'hard';
   question: string;
   choices: string[];
   correctIndex: number;
   answerIndex?: number;
   explanation: string;
-  tags?: string[];
-  status: string;
-  validationStatus?: 'pending' | 'verified' | 'approved' | 'rejected';
-  questionStyled?: string;
-  explanationStyled?: string;
-  hostLeadIn?: string;
-  presentation?: {
+  tags: string[];
+  used?: boolean;
+  status: 'pending' | 'verified' | 'approved' | 'rejected' | 'flagged';
+  presentation: {
     questionStyled?: string;
     explanationStyled?: string;
     hostLeadIn?: string;
   };
   sourceType: string;
-  source?: string;
-  used?: boolean;
-  usedCount?: number;
-  questionId?: string;
-  batchId?: string;
-  verificationVerdict?: string;
-  verificationConfidence?: 'low' | 'medium' | 'high';
-  verificationIssues?: string[];
-  verificationReason?: string;
-  pipelineVersion?: string;
-  createdAt?: number;
-  correctQuip?: string;
-  wrongAnswerQuips?: Record<number, string>;
+  createdAt?: number | string; // Supabase uses ISO strings but app may use timestamp
+  metadata?: Record<string, any>; // For extra items like usedCount, pipelineVersion, etc.
+}
+
+
+export interface RoastState {
+  explanation: string;
+  isCorrect: boolean;
+  questionId: string;
+  userId?: string | null;
+  gameId?: string | null;
+}
+
+export interface ChatMessage {
+  id: string;
+  uid: string;
+  name: string;
+  text: string;
+  timestamp: any;
+  avatarUrl?: string;
 }
 
 export interface Player {
   uid: string;
   name: string;
-  displayName?: string;
   score: number;
   streak: number;
   completedCategories: string[];
   avatarUrl?: string;
-  photoURL?: string;
   lastActive?: number;
   lastResumedAt?: number;
 }
 
+export interface GameAnswer {
+  answerIndex: number;
+  submittedAt: number;
+  isCorrect: boolean;
+  source: 'answer' | 'timeout';
+}
+
+export interface CategoryPerformance {
+  seen: number;
+  correct: number;
+  percentageCorrect: number;
+}
+
+export interface PlayerStatsSummary {
+  completedGames: number;
+  wins: number;
+  losses: number;
+  winPercentage: number;
+  totalQuestionsSeen: number;
+  totalQuestionsCorrect: number;
+  categoryPerformance: Record<string, CategoryPerformance>;
+}
+
+export interface PlayerProfile {
+  userId: string;
+  displayName: string;
+  photoURL?: string;
+  createdAt: any;
+  updatedAt: any;
+  lastSeenAt: any;
+  stats: PlayerStatsSummary;
+}
+
+export interface RecentCompletedGame {
+  gameId: string;
+  players: { uid: string; displayName: string }[];
+  winnerId: string | null;
+  finalScores: Record<string, number>;
+  categoriesUsed: string[];
+  completedAt: number;
+  status: 'completed';
+  opponentIds?: string[];
+}
+
+export interface MatchupSummary {
+  opponentId: string;
+  opponentDisplayName: string;
+  opponentPhotoURL?: string;
+  wins: number;
+  losses: number;
+  totalGames: number;
+  lastPlayedAt: number;
+}
 
 export interface GameState {
   id: string;
@@ -55,29 +112,39 @@ export interface GameState {
   status: 'waiting' | 'active' | 'completed' | 'abandoned';
   hostId: string;
   playerIds: string[];
-  players?: Player[];
+  players: Player[];
   currentTurn: string;
   winnerId: string | null;
-  currentQuestionId: string | null;
-  currentQuestionCategory: string | null;
-  currentQuestionIndex: number;
-  currentQuestionStartedAt: number | null;
-  questionIds: string[];
-  answers: Record<string, Record<string, GameAnswer>>;
-  finalScores: Record<string, number>;
-  categoriesUsed: string[];
-  statsRecordedAt?: number;
-  lastUpdated: number;
-  createdAt?: string;
+  currentQuestionId?: string | null;
+  currentQuestionCategory?: string | null;
+  currentQuestionIndex?: number;
+  currentQuestionStartedAt?: number | null;
+  questionIds?: string[];
+  answers?: Record<string, Record<string, GameAnswer>>;
+  completedAt?: number | null;
+  finalScores?: Record<string, number>;
+  categoriesUsed?: string[];
+  statsRecordedAt?: number | null;
+  createdAt: any;
+  lastUpdated: any;
 }
 
+export interface UserSettings {
+  themeMode: 'dark' | 'light';
+  soundEnabled: boolean;
+  musicEnabled: boolean;
+  sfxEnabled: boolean;
+  commentaryEnabled: boolean;
+  updatedAt: number;
+}
 
-export interface GameAnswer {
-  correctIndex: number;
-  submittedAt: number;
-  isCorrect: boolean;
-  source: string;
-  timeTaken: number;
+export interface RecentPlayer {
+  uid: string;
+  displayName: string;
+  photoURL?: string;
+  lastPlayedAt: number;
+  lastGameId?: string;
+  hidden?: boolean;
 }
 
 export interface GameInvite {
@@ -91,133 +158,34 @@ export interface GameInvite {
   createdAt: number;
 }
 
-export interface RecentPlayer {
-  uid: string;
-  displayName: string;
-  photoURL?: string;
-  lastPlayedAt: number;
-  lastGameId: string;
-  hidden: boolean;
-  updatedAt: number;
+export const CATEGORIES: Category[] = ['History', 'Science', 'Pop Culture', 'Art & Music', 'Sports', 'Technology', 'Random'];
+
+export function getPlayableCategories(): Exclude<Category, 'Random'>[] {
+  return CATEGORIES.filter((category): category is Exclude<Category, 'Random'> => category !== 'Random');
 }
-
-export interface PlayerProfile {
-  id: string;
-  display_name: string;
-  photo_url?: string;
-  stats: PlayerStatsSummary;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface PlayerStatsSummary {
-  completedGames: number;
-  wins: number;
-  losses: number;
-  winPercentage: number;
-  totalQuestionsSeen: number;
-  totalQuestionsCorrect: number;
-  categoryPerformance: Record<string, CategoryPerformance>;
-}
-
-export interface CategoryPerformance {
-  seen: number;
-  correct: number;
-  percentageCorrect: number;
-}
-
-export interface UserSettings {
-  themeMode: 'light' | 'dark';
-  soundEnabled: boolean;
-  musicEnabled: boolean;
-  sfxEnabled: boolean;
-  commentaryEnabled: boolean;
-  updatedAt: number;
-}
-
-export interface MatchupSummary {
-  opponentId: string;
-  opponentDisplayName: string;
-  opponentPhotoURL?: string;
-  wins: number;
-  losses: number;
-  totalGames: number;
-  lastPlayedAt: number;
-}
-
-export interface RecentCompletedGame {
-  gameId: string;
-  players: Player[];
-  winnerId: string | null;
-  finalScores: Record<string, number>;
-  categoriesUsed: string[];
-  completedAt: number;
-  status: string;
-  opponentIds: string[];
-}
-
-export interface ChatMessage {
-  id: string;
-  userId: string;
-  uid: string; // for compatibility
-  name: string;
-  avatarUrl?: string;
-  text: string;
-  timestamp: number;
-}
-
-export interface RoastState {
-  id: string;
-  text: string;
-  targetId: string;
-  explanation: string;
-  isCorrect: boolean;
-  questionId: string;
-  userId: string;
-  gameId: string;
-}
-
-
-export function getPlayableCategories(): string[] {
-  return [
-    'Science',
-    'History',
-    'Geography',
-    'Literature',
-    'Pop Culture',
-    'Sports',
-    'Music',
-    'Art',
-    'Technology',
-    'Animals'
-  ];
-}
-
-export const CATEGORIES = [...getPlayableCategories(), 'Random'] as const;
-
-export const CATEGORY_COLORS: Record<string, string> = {
-  Science: '#22d3ee',
-  History: '#f97316',
-  Geography: '#84cc16',
-  Literature: '#facc15',
-  'Pop Culture': '#f472b6',
-  Sports: '#34d399',
-  Music: '#a78bfa',
-  Art: '#fb7185',
-  Technology: '#60a5fa',
-  Animals: '#f59e0b',
-  Random: '#f8fafc',
-};
 
 export function isPlayableCategory(category: string): boolean {
-  return getPlayableCategories().includes(category);
+  return getPlayableCategories().includes(category as Exclude<Category, 'Random'>);
 }
 
-export const getQuestionText = (question: TriviaQuestion): string =>
-  question.presentation?.questionStyled || question.question;
+export const CATEGORY_COLORS: Record<string, string> = {
+  'History': '#F43F5E', // Rose 500
+  'Science': '#06B6D4', // Cyan 500
+  'Pop Culture': '#D946EF', // Fuchsia 500
+  'Art & Music': '#10B981', // Emerald 500
+  'Sports': '#F59E0B', // Amber 500
+  'Technology': '#3B82F6', // Blue 500
+  'Random': '#FFFFFF',
+};
 
-export const getExplanationText = (question: TriviaQuestion): string =>
-  question.presentation?.explanationStyled || question.explanation;
+export function getQuestionText(question: TriviaQuestion): string {
+  return question.presentation?.questionStyled || question.question;
+}
 
-export const getHostLeadIn = (question: TriviaQuestion): string =>
-  question.presentation?.hostLeadIn || "Here's the next one.";
+export function getExplanationText(question: TriviaQuestion): string {
+  return question.presentation?.explanationStyled || question.explanation;
+}
+
+export function getHostLeadIn(question: TriviaQuestion): string | undefined {
+  return question.presentation?.hostLeadIn;
+}

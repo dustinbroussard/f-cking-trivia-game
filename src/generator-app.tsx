@@ -16,13 +16,13 @@ export function GeneratorApp() {
                 The legacy generator has been retired.
               </h1>
               <p className="mt-4 max-w-xl text-sm leading-6 text-slate-200 sm:text-base">
-                This repo now runs on Supabase, so the old generator and maintenance auth flow have been disabled.
+                This repo now runs on Supabase, and the old generator plus maintenance auth flow have been disabled.
               </p>
             </div>
 
             <div className="rounded-[1.5rem] border border-white/12 bg-slate-950/45 px-5 py-4">
               <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Status</p>
-              <p className="mt-2 text-sm font-semibold text-white">Unavailable during migration</p>
+              <p className="mt-2 text-sm font-semibold text-white">Unavailable during migration cleanup</p>
             </div>
           </div>
         </section>
@@ -35,8 +35,8 @@ export function GeneratorApp() {
             </div>
             <div className="mt-4 space-y-3 text-sm leading-6 text-slate-300">
               <p>The old generator depended on a legacy auth flow, legacy database reads, and a retired maintenance endpoint.</p>
-              <p>Those pieces have been removed so the app no longer ships or relies on that legacy stack for this flow.</p>
-              <p>The next step is to replace this page with a Supabase-native maintenance tool if you still want one.</p>
+              <p>Those pieces have been removed so this flow no longer ships or relies on that legacy stack.</p>
+              <p>The next step is to replace this page with a Supabase-native admin tool if you still want one.</p>
             </div>
           </div>
 

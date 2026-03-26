@@ -7,7 +7,7 @@ interface FlagQuestionParams {
 export async function flagQuestion({ questionId, userId, gameId }: FlagQuestionParams) {
   console.info('[questionFlag] Review queue is temporarily disabled during the Supabase cleanup.', {
     questionId,
-    userId,
-    gameId,
+    ...(userId ? { userId } : {}),
+    ...(gameId ? { gameId } : {}),
   });
 }

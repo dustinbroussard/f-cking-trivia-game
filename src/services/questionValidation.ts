@@ -1,5 +1,5 @@
-import type { TriviaQuestion } from '../types';
-import { isPlayableCategory } from '../types';
+import type { TriviaQuestion } from '../types.js';
+import { isPlayableCategory } from '../types.js';
 
 const MIN_EXPLANATION_LENGTH = 20;
 const DISALLOWED_PHRASES = ['all of the above', 'none of the above'];
@@ -30,6 +30,12 @@ function hasValidChoices(choices: unknown): choices is string[] {
   return Array.isArray(choices) && choices.length === 4 && choices.every(isNonEmptyString);
 }
 
+export function isQuestionApprovedForStorage(question: TriviaQuestion) {
+  return (question.status === 'approved' || question.status === 'verified')
+    && question.metadata?.verificationVerdict === 'pass'
+    && question.metadata?.verificationConfidence === 'high';
+}
+
 export function validateGeneratedQuestion(question: TriviaQuestion): QuestionValidationResult {
   if (!question || typeof question !== 'object') {
     return { isValid: false, reason: 'malformed item' };
@@ -50,6 +56,8 @@ export function validateGeneratedQuestion(question: TriviaQuestion): QuestionVal
   if (!Number.isInteger(question.correctIndex) || question.correctIndex < 0 || question.correctIndex > 3) {
     return { isValid: false, reason: 'invalid correctIndex' };
   }
+
+
 
   if (!isNonEmptyString(question.explanation) || normalizeWhitespace(question.explanation).length < MIN_EXPLANATION_LENGTH) {
     return { isValid: false, reason: 'explanation too short' };

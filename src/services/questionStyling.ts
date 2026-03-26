@@ -1,5 +1,5 @@
 import { Type } from '@google/genai';
-import type { TriviaQuestion } from '../types';
+import type { TriviaQuestion } from '../types.js';
 
 export interface QuestionStylingResult {
   questionStyled: string;

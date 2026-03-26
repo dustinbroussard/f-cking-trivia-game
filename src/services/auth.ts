@@ -1,30 +1,27 @@
 import { supabase } from '../lib/supabase';
 
-export async function signInWithGoogle() {
-  const { error } = await supabase.auth.signInWithOAuth({
+export const signInWithGoogle = async () => {
+  const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: window.location.origin
-    }
+      queryParams: {
+        access_type: 'offline',
+        prompt: 'consent',
+      },
+    },
   });
   if (error) throw error;
-}
+  return data;
+};
 
-export async function signOutUser() {
+export const signOutUser = async () => {
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
-}
+};
 
-export function onAuthStateChange(callback: (user: any) => void) {
+export const onAuthStateChange = (callback: (user: any) => void) => {
   const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
     callback(session?.user ?? null);
   });
   return subscription;
-}
-
-// NEW: Password migration helper (optional)
-export async function migratePassword(email: string, oldPassword: string, newPassword: string) {
-  // This would require a custom endpoint or backend function
-  // For now, implement forced reset strategy
-  console.log('Password migration requires user reset');
-}
+};

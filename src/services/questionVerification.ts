@@ -1,5 +1,5 @@
 import { Type } from '@google/genai';
-import type { TriviaQuestion } from '../types';
+import type { TriviaQuestion } from '../types.js';
 
 export type VerificationVerdict = 'pass' | 'reject';
 export type VerificationConfidence = 'high' | 'medium' | 'low';
@@ -141,7 +141,8 @@ export function normalizeVerificationResults(
 }
 
 export function isQuestionApprovedForStorage(question: TriviaQuestion) {
-  return (question.validationStatus === 'approved' || question.validationStatus === 'verified')
-    && question.verificationVerdict === 'pass'
-    && question.verificationConfidence === 'high';
+  return (question.status === 'approved' || question.status === 'verified')
+    && question.metadata?.verificationVerdict === 'pass'
+    && question.metadata?.verificationConfidence === 'high';
 }
+

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { motion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { Trophy, Users, Gamepad2, User, Upload, Bell, SendHorizontal, Check, X, BarChart3, Trash2 } from 'lucide-react';
 import { publicAsset } from '../assets';
 import { GameInvite, MatchupSummary, PlayerProfile, RecentCompletedGame, RecentPlayer } from '../types';
@@ -26,7 +26,7 @@ interface GameLobbyProps {
   inviteFeedback?: string | null;
 }
 
-type HomeView = 'default' | 'loading' | 'stats' | 'recentPlayers';
+type LobbyMode = 'IDLE' | 'STATS' | 'RECENT_PLAYERS' | 'LOADING' | 'GAME_ACTIVE';
 
 export const GameLobby: React.FC<GameLobbyProps> = ({
   onStartSolo,
@@ -53,59 +53,31 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
   const [joinCode, setJoinCode] = useState('');
   const [showJoinInput, setShowJoinInput] = useState(false);
   const [selectedAvatar, setSelectedAvatar] = useState('');
-  const [homeView, setHomeView] = useState<HomeView>('default');
+  const [currentMode, setCurrentMode] = useState<LobbyMode>('IDLE');
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const statsPanelRef = useRef<HTMLDivElement>(null);
-  const recentPlayersPanelRef = useRef<HTMLDivElement>(null);
-  const statsButtonRef = useRef<HTMLButtonElement>(null);
-  const recentPlayersButtonRef = useRef<HTMLButtonElement>(null);
-
-  // Keep a single lobby mode so primary actions, loading, and panels stay mutually exclusive.
-  const effectiveHomeView: HomeView = isLoading ? 'loading' : homeView;
 
   useEffect(() => {
-    if (selectedMatchup && homeView !== 'recentPlayers') {
-      setHomeView('recentPlayers');
+    if (selectedMatchup && currentMode !== 'RECENT_PLAYERS') {
+      setCurrentMode('RECENT_PLAYERS');
     }
-  }, [homeView, selectedMatchup]);
+  }, [currentMode, selectedMatchup]);
 
   useEffect(() => {
-    if (!isLoading && homeView === 'loading') {
-      setHomeView('default');
+    // App-level async work owns loading. The lobby mirrors that into one render mode so
+    // buttons, join inputs, and modals are never mounted alongside the loading handoff.
+    if (isLoading) {
+      setCurrentMode('LOADING');
+      return;
     }
-  }, [homeView, isLoading]);
+
+    setCurrentMode((mode) => (mode === 'LOADING' ? 'IDLE' : mode));
+  }, [isLoading]);
 
   useEffect(() => {
-    if (effectiveHomeView !== 'default' && showJoinInput) {
+    if (currentMode !== 'IDLE' && showJoinInput) {
       setShowJoinInput(false);
     }
-  }, [effectiveHomeView, showJoinInput]);
-
-  useEffect(() => {
-    if (effectiveHomeView !== 'stats' && effectiveHomeView !== 'recentPlayers' && !selectedMatchup) return;
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-
-      const clickedStatsTrigger = statsButtonRef.current?.contains(target);
-      const clickedStatsPanel = statsPanelRef.current?.contains(target);
-      if (effectiveHomeView === 'stats' && !clickedStatsTrigger && !clickedStatsPanel) {
-        setHomeView('default');
-      }
-
-      const clickedRecentPlayersTrigger = recentPlayersButtonRef.current?.contains(target);
-      const clickedRecentPlayersPanel = recentPlayersPanelRef.current?.contains(target);
-      if ((effectiveHomeView === 'recentPlayers' || selectedMatchup) && !clickedRecentPlayersTrigger && !clickedRecentPlayersPanel) {
-        setHomeView('default');
-        if (selectedMatchup) {
-          onCloseMatchup();
-        }
-      }
-    };
-
-    document.addEventListener('pointerdown', handlePointerDown);
-    return () => document.removeEventListener('pointerdown', handlePointerDown);
-  }, [effectiveHomeView, onCloseMatchup, selectedMatchup]);
+  }, [currentMode, showJoinInput]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -148,11 +120,22 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
   const overallAccuracy = playerProfile?.stats.totalQuestionsSeen
     ? Math.round((playerProfile.stats.totalQuestionsCorrect / playerProfile.stats.totalQuestionsSeen) * 100)
     : 0;
-  const isInteractionLocked = effectiveHomeView === 'loading';
+  const isInteractionLocked = currentMode === 'LOADING';
+  const isStatsOpen = currentMode === 'STATS';
+  const isRecentPlayersOpen = currentMode === 'RECENT_PLAYERS';
+  const showPrimaryActions = currentMode === 'IDLE';
+  const showLobbyModal = isStatsOpen || isRecentPlayersOpen;
+
+  const closeLobbyModal = () => {
+    if (selectedMatchup) {
+      onCloseMatchup();
+    }
+    setCurrentMode('IDLE');
+  };
 
   const handleToggleStats = () => {
     if (isInteractionLocked) return;
-    setHomeView((current) => current === 'stats' ? 'default' : 'stats');
+    setCurrentMode((mode) => mode === 'STATS' ? 'IDLE' : 'STATS');
     if (selectedMatchup) {
       onCloseMatchup();
     }
@@ -160,30 +143,30 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
 
   const handleToggleRecentPlayers = () => {
     if (isInteractionLocked) return;
-    setHomeView((current) => current === 'recentPlayers' ? 'default' : 'recentPlayers');
+    setCurrentMode((mode) => mode === 'RECENT_PLAYERS' ? 'IDLE' : 'RECENT_PLAYERS');
   };
 
   const handleStartSolo = () => {
     if (isInteractionLocked) return;
-    setHomeView('loading');
+    // Transition into a dedicated loading mode before starting async work to guard against double taps.
+    setCurrentMode('LOADING');
     onStartSolo(selectedAvatar);
   };
 
   const handleStartMulti = () => {
     if (isInteractionLocked) return;
-    setHomeView('loading');
+    setCurrentMode('LOADING');
     onStartMulti(selectedAvatar);
   };
 
   const handleJoinSubmit = () => {
     if (isInteractionLocked || joinCode.length !== 4) return;
-    setHomeView('loading');
+    setCurrentMode('LOADING');
     onJoinMulti(joinCode, selectedAvatar);
   };
 
   return (
     <div className="w-full max-w-md mx-auto min-h-full flex flex-col items-center gap-5 px-4 pt-8 pb-3 sm:gap-6 sm:p-6">
-      {/* Logo Area */}
       <div className="text-center relative shrink-0">
         <div className="relative inline-block w-72 h-72 sm:w-80 sm:h-80 md:w-80 md:h-80">
           <img
@@ -195,7 +178,6 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
         </div>
       </div>
 
-      {/* Avatar Selection */}
       <div className="w-full space-y-2 flex flex-col items-center shrink-0">
         <input
           type="file"
@@ -205,7 +187,8 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
           onChange={handleImageUpload}
         />
 
-        <button type="button"
+        <button
+          type="button"
           onClick={() => {
             if (isInteractionLocked) return;
             fileInputRef.current?.click();
@@ -226,13 +209,11 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
         </button>
       </div>
 
-      {/* Main Actions */}
       <div className="w-full space-y-3 relative">
-        {effectiveHomeView === 'default' && (
+        {showPrimaryActions && (
           <div className="grid grid-cols-2 gap-3">
             <button
               type="button"
-              ref={statsButtonRef}
               onClick={handleToggleStats}
               aria-label="Show stats"
               title="Show stats"
@@ -242,7 +223,6 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
             </button>
             <button
               type="button"
-              ref={recentPlayersButtonRef}
               onClick={handleToggleRecentPlayers}
               aria-label="Show recent players"
               title="Show recent players"
@@ -253,7 +233,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
           </div>
         )}
 
-        {effectiveHomeView === 'loading' && (
+        {currentMode === 'LOADING' && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -273,234 +253,10 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
           </motion.div>
         )}
 
-        {effectiveHomeView === 'stats' && (
-          <div
-            ref={statsPanelRef}
-            className="w-full theme-panel backdrop-blur-xl border rounded-2xl p-4 sm:p-5 space-y-4 max-h-[40dvh] overflow-y-auto custom-scrollbar shadow-2xl"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 text-cyan-400" />
-                <h4 className="text-sm font-black uppercase tracking-widest">My Stats</h4>
-              </div>
-              <button type="button" onClick={() => setHomeView('default')} className="p-2 rounded-xl theme-button" aria-label="Close stats panel">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="theme-soft-surface border rounded-2xl p-4 flex flex-col justify-center">
-                <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Win Rate</p>
-                <p className="text-3xl font-black">{playerProfile?.stats.winPercentage ?? 0}%</p>
-              </div>
-              <div className="theme-soft-surface border rounded-2xl p-4 flex flex-col justify-center">
-                <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Accuracy</p>
-                <p className="text-3xl font-black text-cyan-400">{overallAccuracy}%</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-3">
-              <div className="theme-soft-surface border rounded-2xl p-4 text-center">
-                <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Wins</p>
-                <p className="text-xl font-black text-emerald-400">{playerProfile?.stats.wins ?? 0}</p>
-              </div>
-              <div className="theme-soft-surface border rounded-2xl p-4 text-center">
-                <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Losses</p>
-                <p className="text-xl font-black text-rose-400">{playerProfile?.stats.losses ?? 0}</p>
-              </div>
-              <div className="theme-soft-surface border rounded-2xl p-4 text-center">
-                <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Matches</p>
-                <p className="text-xl font-black">{playerProfile?.stats.completedGames ?? 0}</p>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <h5 className="text-xs font-black uppercase tracking-widest theme-text-muted">Recent Completed Games</h5>
-              {recentCompletedGames.length === 0 ? (
-                <p className="text-sm theme-text-muted">Finish a game and your latest results will show up here.</p>
-              ) : (
-                recentCompletedGames.map((game) => (
-                  <div key={game.gameId} className="theme-soft-surface border rounded-2xl p-4 flex items-center justify-between gap-4">
-                    <div>
-                      <p className="text-sm font-bold">
-                        {game.players.map((player) => player.displayName).join(' vs ')}
-                      </p>
-                      <p className="text-[10px] uppercase tracking-widest theme-text-muted">
-                        {new Date(game.completedAt).toLocaleDateString()} • {game.categoriesUsed.join(', ') || 'No categories'}
-                      </p>
-                    </div>
-                    <p className="text-xs font-black uppercase tracking-widest theme-text-secondary">
-                      Winner: {game.players.find((player) => player.uid === game.winnerId)?.displayName || 'None'}
-                    </p>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="space-y-3">
-              <h5 className="text-xs font-black uppercase tracking-widest theme-text-muted">Category Performance</h5>
-              {Object.entries(playerProfile?.stats.categoryPerformance || {}).length === 0 ? (
-                <p className="text-sm theme-text-muted">Category accuracy shows up after you finish completed games.</p>
-              ) : (
-                <div className="space-y-2">
-                  {Object.entries(playerProfile?.stats.categoryPerformance || {}).map(([category, stats]) => (
-                    <div key={category} className="theme-soft-surface border rounded-2xl p-4 flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-bold">{category}</p>
-                        <p className="text-[10px] uppercase tracking-widest theme-text-muted">
-                          {stats.correct}/{stats.seen} correct
-                        </p>
-                      </div>
-                      <p className="text-lg font-black">{stats.percentageCorrect}%</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {effectiveHomeView === 'recentPlayers' && (
-          <div
-            ref={recentPlayersPanelRef}
-            className="w-full theme-panel backdrop-blur-xl border rounded-2xl p-4 sm:p-5 space-y-4 max-h-[40dvh] overflow-y-auto custom-scrollbar shadow-2xl"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-cyan-400" />
-                <h4 className="text-sm font-black uppercase tracking-widest">Recent Players</h4>
-              </div>
-              <div className="flex items-center gap-3">
-                {inviteFeedback && (
-                  <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400" role="status" aria-live="polite">
-                    {inviteFeedback}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (selectedMatchup) {
-                      onCloseMatchup();
-                    }
-                    setHomeView('default');
-                  }}
-                  className="p-2 rounded-xl theme-button"
-                  aria-label="Close recent players panel"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {recentPlayers.length === 0 ? (
-              <p className="text-sm theme-text-muted">Play a multiplayer match and recent opponents will show up here.</p>
-            ) : (
-              <div className="space-y-3">
-                {recentPlayers.map((player) => (
-                  <div key={player.uid} className="theme-soft-surface border rounded-2xl p-4 space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-11 h-11 theme-avatar-surface rounded-xl flex items-center justify-center overflow-hidden border shrink-0">
-                        {player.photoURL ? (
-                          <img src={player.photoURL} alt={player.displayName} className="w-full h-full object-cover" />
-                        ) : (
-                          <User className="w-5 h-5 theme-text-muted" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-bold truncate">{player.displayName}</p>
-                        <p className="text-[10px] uppercase tracking-widest theme-text-muted">
-                          Last played {new Date(player.lastPlayedAt).toLocaleDateString()}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => onInspectMatchup(player)}
-                        className="px-3 py-2 rounded-xl theme-button font-black text-[10px] uppercase tracking-widest"
-                      >
-                        History
-                      </button>
-                      <button type="button"
-                        onClick={() => onInviteRecentPlayer(player, selectedAvatar)}
-                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-pink-500 to-purple-600 text-white font-black text-xs uppercase tracking-widest shadow-lg"
-                      >
-                        <span className="inline-flex items-center gap-1"><SendHorizontal className="w-3.5 h-3.5" /> Invite</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onRemoveRecentPlayer(player)}
-                        className="p-2 rounded-xl theme-button"
-                        aria-label={`Remove ${player.displayName} from recent players`}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                    </div>
-
-                    {selectedMatchup?.opponentId === player.uid && (
-                      <div className="border-t pt-3 space-y-3">
-                        {isLoadingMatchup ? (
-                          <p className="text-sm theme-text-muted">Loading matchup history...</p>
-                        ) : (
-                          <>
-                            <div className="grid grid-cols-3 gap-3">
-                              <div className="theme-panel-strong border rounded-2xl p-3">
-                                <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Record</p>
-                                <p className="text-lg font-black">
-                                  {selectedMatchup.summary?.wins ?? 0}-{selectedMatchup.summary?.losses ?? 0}
-                                </p>
-                              </div>
-                              <div className="theme-panel-strong border rounded-2xl p-3">
-                                <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Games</p>
-                                <p className="text-lg font-black">{selectedMatchup.summary?.totalGames ?? 0}</p>
-                              </div>
-                              <div className="theme-panel-strong border rounded-2xl p-3">
-                                <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Last Played</p>
-                                <p className="text-sm font-black">
-                                  {selectedMatchup.summary?.lastPlayedAt ? new Date(selectedMatchup.summary.lastPlayedAt).toLocaleDateString() : 'N/A'}
-                                </p>
-                              </div>
-                            </div>
-                            {selectedMatchup.games.length === 0 ? (
-                              <p className="text-sm theme-text-muted">No completed games against this player yet.</p>
-                            ) : (
-                              <div className="space-y-2">
-                                {selectedMatchup.games.map((game) => (
-                                  <div key={game.gameId} className="theme-panel-strong border rounded-2xl p-3 flex items-center justify-between gap-3">
-                                    <div>
-                                      <p className="text-sm font-bold">
-                                        Winner: {game.players.find((entry) => entry.uid === game.winnerId)?.displayName || 'None'}
-                                      </p>
-                                      <p className="text-[10px] uppercase tracking-widest theme-text-muted">
-                                        {new Date(game.completedAt).toLocaleDateString()}
-                                      </p>
-                                    </div>
-                                    <p className="text-[10px] uppercase tracking-widest theme-text-secondary">
-                                      {Object.entries(game.finalScores).map(([uid, score]) => {
-                                        const entry = game.players.find((playerEntry) => playerEntry.uid === uid);
-                                        return `${entry?.displayName || 'Player'} ${score}`;
-                                      }).join(' • ')}
-                                    </p>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {effectiveHomeView === 'default' && (
+        {showPrimaryActions && (
           <>
-            <motion.button type="button"
+            <motion.button
+              type="button"
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleStartSolo}
@@ -511,7 +267,8 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
               Solo Mode
             </motion.button>
 
-            <motion.button type="button"
+            <motion.button
+              type="button"
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={handleStartMulti}
@@ -524,7 +281,8 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
 
             <div className="space-y-2">
               {!showJoinInput ? (
-                <motion.button type="button"
+                <motion.button
+                  type="button"
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={() => setShowJoinInput(true)}
@@ -551,7 +309,8 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                     pattern="[A-Z0-9]{4}"
                     className="flex-1 theme-input border rounded-xl px-4 text-xl font-black text-center focus:outline-none focus:border-pink-500 focus:ring-2 focus:ring-pink-500/20 transition-all duration-300 ease-in-out shadow-inner"
                   />
-                  <button type="button"
+                  <button
+                    type="button"
                     onClick={handleJoinSubmit}
                     aria-label="Join multiplayer game"
                     disabled={joinCode.length !== 4}
@@ -559,7 +318,8 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                   >
                     GO
                   </button>
-                  <button type="button"
+                  <button
+                    type="button"
                     onClick={() => setShowJoinInput(false)}
                     aria-label="Close join game code entry"
                     className="px-4 theme-button rounded-xl font-black transition-all duration-300 ease-in-out shadow-md"
@@ -573,7 +333,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
         )}
       </div>
 
-      {effectiveHomeView !== 'loading' && incomingInvites.length > 0 && (
+      {showPrimaryActions && incomingInvites.length > 0 && (
         <div className="w-full theme-panel backdrop-blur-xl border rounded-2xl p-4 sm:p-5 space-y-4 max-h-[28dvh] overflow-y-auto custom-scrollbar">
           <div className="flex items-center gap-2">
             <Bell className="w-4 h-4 text-pink-500" />
@@ -597,17 +357,21 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <button type="button"
+                  <button
+                    type="button"
                     onClick={() => onAcceptInvite(invite, selectedAvatar)}
-                    className="px-3 py-2 rounded-xl bg-emerald-500 text-emerald-950 font-black text-xs uppercase tracking-widest"
+                    className="p-2 rounded-xl bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 transition-colors"
+                    aria-label={`Accept invite from ${invite.fromDisplayName}`}
                   >
-                    <span className="inline-flex items-center gap-1"><Check className="w-3.5 h-3.5" /> Accept</span>
+                    <Check className="w-4 h-4" />
                   </button>
-                  <button type="button"
+                  <button
+                    type="button"
                     onClick={() => onDeclineInvite(invite)}
-                    className="px-3 py-2 rounded-xl theme-button font-black text-xs uppercase tracking-widest"
+                    className="p-2 rounded-xl bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 transition-colors"
+                    aria-label={`Decline invite from ${invite.fromDisplayName}`}
                   >
-                    <span className="inline-flex items-center gap-1"><X className="w-3.5 h-3.5" /> Decline</span>
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
               </div>
@@ -616,6 +380,244 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
         </div>
       )}
 
+      <AnimatePresence>
+        {showLobbyModal && (
+          <motion.div
+            key="lobby-modal"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[90] flex items-center justify-center p-4 theme-overlay backdrop-blur-sm"
+            onClick={closeLobbyModal}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={isStatsOpen ? 'lobby-stats-title' : 'lobby-recent-players-title'}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 16, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 16, scale: 0.96 }}
+              transition={{ type: 'spring', stiffness: 320, damping: 28 }}
+              onClick={(event) => event.stopPropagation()}
+              className="w-full max-w-lg max-h-[80dvh] theme-panel-strong backdrop-blur-xl border rounded-[1.75rem] p-4 sm:p-5 shadow-2xl flex flex-col"
+            >
+              {isStatsOpen && (
+                <>
+                  <div className="flex items-center justify-between gap-3 mb-4 shrink-0">
+                    <div className="flex items-center gap-2">
+                      <BarChart3 className="w-4 h-4 text-cyan-400" />
+                      <h4 id="lobby-stats-title" className="text-sm font-black uppercase tracking-widest">My Stats</h4>
+                    </div>
+                    <button type="button" onClick={closeLobbyModal} className="p-2 rounded-xl theme-button" aria-label="Close stats panel">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="overflow-y-auto custom-scrollbar pr-1 space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="theme-soft-surface border rounded-2xl p-4 flex flex-col justify-center">
+                        <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Win Rate</p>
+                        <p className="text-3xl font-black">{playerProfile?.stats.winPercentage ?? 0}%</p>
+                      </div>
+                      <div className="theme-soft-surface border rounded-2xl p-4 flex flex-col justify-center">
+                        <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Accuracy</p>
+                        <p className="text-3xl font-black text-cyan-400">{overallAccuracy}%</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="theme-soft-surface border rounded-2xl p-4 text-center">
+                        <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Wins</p>
+                        <p className="text-xl font-black text-emerald-400">{playerProfile?.stats.wins ?? 0}</p>
+                      </div>
+                      <div className="theme-soft-surface border rounded-2xl p-4 text-center">
+                        <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Losses</p>
+                        <p className="text-xl font-black text-rose-400">{playerProfile?.stats.losses ?? 0}</p>
+                      </div>
+                      <div className="theme-soft-surface border rounded-2xl p-4 text-center">
+                        <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Matches</p>
+                        <p className="text-xl font-black">{playerProfile?.stats.completedGames ?? 0}</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <h5 className="text-xs font-black uppercase tracking-widest theme-text-muted">Recent Completed Games</h5>
+                      {recentCompletedGames.length === 0 ? (
+                        <p className="text-sm theme-text-muted">Finish a game and your latest results will show up here.</p>
+                      ) : (
+                        recentCompletedGames.map((game) => (
+                          <div key={game.gameId} className="theme-soft-surface border rounded-2xl p-4 flex items-center justify-between gap-4">
+                            <div>
+                              <p className="text-sm font-bold">
+                                {game.players.map((player) => player.displayName).join(' vs ')}
+                              </p>
+                              <p className="text-[10px] uppercase tracking-widest theme-text-muted">
+                                {new Date(game.completedAt).toLocaleDateString()} • {game.categoriesUsed.join(', ') || 'No categories'}
+                              </p>
+                            </div>
+                            <p className="text-xs font-black uppercase tracking-widest theme-text-secondary">
+                              Winner: {game.players.find((player) => player.uid === game.winnerId)?.displayName || 'None'}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    <div className="space-y-3">
+                      <h5 className="text-xs font-black uppercase tracking-widest theme-text-muted">Category Performance</h5>
+                      {Object.entries(playerProfile?.stats.categoryPerformance || {}).length === 0 ? (
+                        <p className="text-sm theme-text-muted">Category accuracy shows up after you finish completed games.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {Object.entries(playerProfile?.stats.categoryPerformance || {}).map(([category, stats]) => (
+                            <div key={category} className="theme-soft-surface border rounded-2xl p-4 flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-bold">{category}</p>
+                                <p className="text-[10px] uppercase tracking-widest theme-text-muted">
+                                  {stats.correct}/{stats.seen} correct
+                                </p>
+                              </div>
+                              <p className="text-lg font-black">{stats.percentageCorrect}%</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {isRecentPlayersOpen && (
+                <>
+                  <div className="flex items-center justify-between gap-3 mb-4 shrink-0">
+                    <div className="flex items-center gap-2">
+                      <Users className="w-4 h-4 text-cyan-400" />
+                      <h4 id="lobby-recent-players-title" className="text-sm font-black uppercase tracking-widest">Recent Players</h4>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {inviteFeedback && (
+                        <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400" role="status" aria-live="polite">
+                          {inviteFeedback}
+                        </span>
+                      )}
+                      <button type="button" onClick={closeLobbyModal} className="p-2 rounded-xl theme-button" aria-label="Close recent players panel">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="overflow-y-auto custom-scrollbar pr-1 space-y-4">
+                    {recentPlayers.length === 0 ? (
+                      <p className="text-sm theme-text-muted">Play a multiplayer match and recent opponents will show up here.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {recentPlayers.map((player) => (
+                          <div key={player.uid} className="theme-soft-surface border rounded-2xl p-4 space-y-3">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="w-11 h-11 theme-avatar-surface rounded-xl flex items-center justify-center overflow-hidden border shrink-0">
+                                  {player.photoURL ? (
+                                    <img src={player.photoURL} alt={player.displayName} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <User className="w-5 h-5 theme-text-muted" />
+                                  )}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-bold truncate">{player.displayName}</p>
+                                  <p className="text-[10px] uppercase tracking-widest theme-text-muted">
+                                    Last played {new Date(player.lastPlayedAt).toLocaleDateString()}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => onInspectMatchup(player)}
+                                  className="px-3 py-2 rounded-xl theme-button font-black text-[10px] uppercase tracking-widest"
+                                >
+                                  History
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onInviteRecentPlayer(player, selectedAvatar)}
+                                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-pink-500 to-purple-600 text-white font-black text-xs uppercase tracking-widest shadow-lg"
+                                >
+                                  <span className="inline-flex items-center gap-1"><SendHorizontal className="w-3.5 h-3.5" /> Invite</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onRemoveRecentPlayer(player)}
+                                  className="p-2 rounded-xl theme-button"
+                                  aria-label={`Remove ${player.displayName} from recent players`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {selectedMatchup?.opponentId === player.uid && (
+                              <div className="border-t pt-3 space-y-3">
+                                {isLoadingMatchup ? (
+                                  <p className="text-sm theme-text-muted">Loading matchup history...</p>
+                                ) : (
+                                  <>
+                                    <div className="grid grid-cols-3 gap-3">
+                                      <div className="theme-panel-strong border rounded-2xl p-3">
+                                        <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Record</p>
+                                        <p className="text-lg font-black">
+                                          {selectedMatchup.summary?.wins ?? 0}-{selectedMatchup.summary?.losses ?? 0}
+                                        </p>
+                                      </div>
+                                      <div className="theme-panel-strong border rounded-2xl p-3">
+                                        <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Games</p>
+                                        <p className="text-lg font-black">{selectedMatchup.summary?.totalGames ?? 0}</p>
+                                      </div>
+                                      <div className="theme-panel-strong border rounded-2xl p-3">
+                                        <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Last Played</p>
+                                        <p className="text-sm font-black">
+                                          {selectedMatchup.summary?.lastPlayedAt ? new Date(selectedMatchup.summary.lastPlayedAt).toLocaleDateString() : 'N/A'}
+                                        </p>
+                                      </div>
+                                    </div>
+                                    {selectedMatchup.games.length === 0 ? (
+                                      <p className="text-sm theme-text-muted">No completed games against this player yet.</p>
+                                    ) : (
+                                      <div className="space-y-2">
+                                        {selectedMatchup.games.map((game) => (
+                                          <div key={game.gameId} className="theme-panel-strong border rounded-2xl p-3 flex items-center justify-between gap-3">
+                                            <div>
+                                              <p className="text-sm font-bold">
+                                                Winner: {game.players.find((entry) => entry.uid === game.winnerId)?.displayName || 'None'}
+                                              </p>
+                                              <p className="text-[10px] uppercase tracking-widest theme-text-muted">
+                                                {new Date(game.completedAt).toLocaleDateString()}
+                                              </p>
+                                            </div>
+                                            <p className="text-[10px] uppercase tracking-widest theme-text-secondary">
+                                              {Object.entries(game.finalScores).map(([uid, score]) => {
+                                                const entry = game.players.find((playerEntry) => playerEntry.uid === uid);
+                                                return `${entry?.displayName || 'Player'} ${score}`;
+                                              }).join(' • ')}
+                                            </p>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

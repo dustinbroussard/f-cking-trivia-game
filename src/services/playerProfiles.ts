@@ -1,154 +1,71 @@
 import { supabase } from '../lib/supabase';
-import { PlayerProfile, PlayerStatsSummary, CategoryPerformance, RecentCompletedGame } from '../types';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
+import {
+  CategoryPerformance,
+  MatchupSummary,
+  Player,
+  PlayerProfile,
+  PlayerStatsSummary,
+  RecentCompletedGame,
+  RecentPlayer,
+  TriviaQuestion,
+} from '../types';
 
-export async function ensurePlayerProfile(user: any): Promise<void> {
-  // The database trigger handles this automatically via handle_new_user()
-  // But we can ensure user_settings exists too
-  const { error } = await supabase
-    .from('user_settings')
-    .upsert({ 
-      user_id: user.id,
-      theme_mode: 'dark',
-      sound_enabled: true,
-      music_enabled: true,
-      sfx_enabled: true,
-      commentary_enabled: true
-    });
-  
-  if (error) throw error;
-}
+const DEFAULT_STATS: PlayerStatsSummary = {
+  completedGames: 0,
+  wins: 0,
+  losses: 0,
+  winPercentage: 0,
+  totalQuestionsSeen: 0,
+  totalQuestionsCorrect: 0,
+  categoryPerformance: {},
+};
 
-export async function loadMatchupHistory(userId: string, opponentId: string) {
-  const { data, error } = await supabase
-    .from('matchup_history')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('opponent_id', opponentId)
+const getDefaultCategoryPerformance = (): CategoryPerformance => ({
+  seen: 0,
+  correct: 0,
+  percentageCorrect: 0,
+});
+
+export async function ensurePlayerProfile(user: SupabaseUser) {
+  const { data: existingProfile, error: getError } = await supabase
+    .from('profiles')
+    .select('id, display_name, photo_url')
+    .eq('id', user.id)
     .single();
-  
-  if (error || !data) {
-    return { summary: null as any, games: [] as RecentCompletedGame[] };
+
+  if (getError && getError.code !== 'PGRST116') { // PGRST116 is "no rows found"
+    throw getError;
   }
 
-  return {
-    summary: {
-      opponentId: data.opponent_id,
-      opponentDisplayName: data.opponent_display_name,
-      opponentPhotoURL: data.opponent_photo_url,
-      wins: data.wins,
-      losses: data.losses,
-      totalGames: data.wins + data.losses,
-      lastPlayedAt: new Date(data.last_played_at).getTime()
-    },
-    games: [] // Would need additional query to get game details
-  };
-}
+  const identity = user.user_metadata;
+  const now = new Date().toISOString();
 
-export async function recordCompletedGame(completedGame: any) {
-  // Insert into completed_games archive
-  const { error } = await supabase
-    .from('completed_games')
-    .insert({
-      id: completedGame.gameId,
-      players: completedGame.players,
-      winner_id: completedGame.winnerId,
-      final_scores: completedGame.finalScores,
-      categories_used: completedGame.categoriesUsed,
-      questions: completedGame.questions,
-      completed_at: new Date(completedGame.completedAt).toISOString()
-    });
-  
-  if (error) throw error;
-  
-  // Update matchup history for each player
-  const players = completedGame.players;
-  const winnerId = completedGame.winnerId;
-  
-  for (const player of players) {
-    const isWinner = player.uid === winnerId;
-    const opponent = players.find((p: any) => p.uid !== player.uid);
-    if (!opponent) continue;
-    
-    await supabase.rpc('upsert_matchup_history', {
-      p_user_id: player.uid,
-      p_opponent_id: opponent.uid,
-      p_won: isWinner ? 1 : 0,
-      p_lost: isWinner ? 0 : 1,
-      p_opponent_display_name: opponent.name,
-      p_opponent_photo_url: opponent.avatarUrl || null
-    });
+  if (!existingProfile) {
+    const newProfile = {
+      id: user.id,
+      display_name: identity?.full_name || identity?.display_name || 'Player',
+      photo_url: identity?.avatar_url || identity?.picture || undefined,
+      created_at: now,
+      updated_at: now,
+      last_seen_at: now,
+      stats: DEFAULT_STATS,
+    };
+    const { error: insertError } = await supabase.from('profiles').insert(newProfile);
+    if (insertError) throw insertError;
+    return;
   }
-}
 
-export async function recordQuestionStats(stats: { uid: string; category: string; isCorrect: boolean }) {
-  // This would update the profiles.stats JSONB field
-  const { data: profile } = await supabase
+  const { error: updateError } = await supabase
     .from('profiles')
-    .select('stats')
-    .eq('id', stats.uid)
-    .single();
-  
-  if (!profile) return;
-  
-  const currentStats = profile.stats || {};
-  const categoryPerformance = currentStats.categoryPerformance || {};
-  const catStats = categoryPerformance[stats.category] || { seen: 0, correct: 0 };
-  
-  const updatedStats = {
-    ...currentStats,
-    totalQuestionsSeen: (currentStats.totalQuestionsSeen || 0) + 1,
-    totalQuestionsCorrect: (currentStats.totalQuestionsCorrect || 0) + (stats.isCorrect ? 1 : 0),
-    categoryPerformance: {
-      ...categoryPerformance,
-      [stats.category]: {
-        seen: catStats.seen + 1,
-        correct: catStats.correct + (stats.isCorrect ? 1 : 0),
-        percentageCorrect: ((catStats.correct + (stats.isCorrect ? 1 : 0)) / (catStats.seen + 1)) * 100
-      }
-    }
-  };
-  
-  await supabase
-    .from('profiles')
-    .update({ stats: updatedStats })
-    .eq('id', stats.uid);
-}
-
-// Add this RPC function to your database
-/*
-create function public.upsert_matchup_history(
-  p_user_id uuid,
-  p_opponent_id uuid,
-  p_won integer,
-  p_lost integer,
-  p_opponent_display_name text,
-  p_opponent_photo_url text
-)
-returns void as $$
-begin
-  insert into public.matchup_history (user_id, opponent_id, wins, losses, last_played_at, opponent_display_name, opponent_photo_url)
-  values (p_user_id, p_opponent_id, p_won, p_lost, timezone('utc'::text, now()), p_opponent_display_name, p_opponent_photo_url)
-  on conflict (user_id, opponent_id) 
-  do update set 
-    wins = public.matchup_history.wins + p_won,
-    losses = public.matchup_history.losses + p_lost,
-    last_played_at = timezone('utc'::text, now()),
-    opponent_display_name = p_opponent_display_name,
-    opponent_photo_url = p_opponent_photo_url;
-end;
-$$ language plpgsql security definer;
-*/
-
-export async function updatePlayer(ownerId: string, opponentId: string, patch: any) {
-  const { error } = await supabase
-    .from('recent_players')
-    .upsert({
-      user_id: ownerId,
-      opponent_id: opponentId,
-      ...patch,
-      updated_at: new Date().toISOString()
-    });
-  if (error) throw error;
+    .update({
+      display_name: identity?.full_name || identity?.display_name || existingProfile.display_name || 'Player',
+      photo_url: identity?.avatar_url || identity?.picture || existingProfile.photo_url || undefined,
+      updated_at: now,
+      last_seen_at: now,
+    })
+    .eq('id', user.id);
+  if (updateError) throw updateError;
 }
 
 export function subscribePlayerProfile(
@@ -156,37 +73,70 @@ export function subscribePlayerProfile(
   callback: (profile: PlayerProfile | null) => void,
   onError?: (error: unknown) => void
 ) {
+  // Supabase Realtime for a single row
   const channel = supabase
     .channel(`profile-${uid}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${uid}` }, (p) => {
-      callback(p.new as PlayerProfile);
-    })
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${uid}` },
+      (payload) => {
+        callback(payload.new as PlayerProfile);
+      }
+    )
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') {
-        supabase.from('profiles').select('*').eq('id', uid).single().then(({ data, error }) => {
-          if (error && error.code !== 'PGRST116') onError?.(error);
-          else callback(data as PlayerProfile);
-        });
+        supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', uid)
+          .single()
+          .then(({ data, error }) => {
+            if (error) onError?.(error);
+            else callback(data as PlayerProfile);
+          });
       }
     });
-  return () => { void supabase.removeChannel(channel); };
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 
-
-export function subscribeRecentPlayers(uid: string, callback: (ps: any[]) => void, onError?: (e: unknown) => void) {
+export function subscribeRecentPlayers(
+  uid: string,
+  callback: (players: RecentPlayer[]) => void,
+  onError?: (error: unknown) => void
+) {
   const channel = supabase
     .channel(`recent-players-${uid}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'recent_players', filter: `user_id=eq.${uid}` }, () => {
-      loadRecentPlayers(uid).then(callback).catch(onError);
-    })
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'recent_players', filter: `user_id=eq.${uid}` },
+      () => {
+        // Just reload everything on change
+        loadRecentPlayers(uid).then(callback).catch(onError);
+      }
+    )
     .subscribe((status) => {
-      if (status === 'SUBSCRIBED') loadRecentPlayers(uid).then(callback).catch(onError);
+      if (status === 'SUBSCRIBED') {
+        loadRecentPlayers(uid).then(callback).catch(onError);
+      }
     });
-  return () => { void supabase.removeChannel(channel); };
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 
-async function loadRecentPlayers(uid: string): Promise<any[]> {
-  const { data, error } = await supabase.from('recent_players').select('*').eq('user_id', uid).eq('hidden', false).order('last_played_at', { ascending: false }).limit(12);
+async function loadRecentPlayers(uid: string): Promise<RecentPlayer[]> {
+  const { data, error } = await supabase
+    .from('recent_players')
+    .select('*')
+    .eq('user_id', uid)
+    .eq('hidden', false)
+    .order('last_played_at', { ascending: false })
+    .limit(12);
+
   if (error) throw error;
   return data.map(d => ({
     uid: d.opponent_id,
@@ -199,33 +149,208 @@ async function loadRecentPlayers(uid: string): Promise<any[]> {
   }));
 }
 
-export function subscribeRecentCompletedGames(uid: string, callback: (gs: RecentCompletedGame[]) => void, onError?: (e: unknown) => void, limitLimit = 5) {
+export function subscribeRecentCompletedGames(
+  uid: string,
+  callback: (games: RecentCompletedGame[]) => void,
+  onError?: (error: unknown) => void
+) {
+  // For Supabase, we might just use a regular select if changes are infrequent
+  // or a channel listening to the 'games' table if the player is in 'player_ids'
+  loadRecentGames(uid).then(callback).catch(onError);
+
   const channel = supabase
-    .channel(`games-${uid}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'games' }, () => {
-      loadRecentGames(uid, limitLimit).then(callback).catch(onError);
-    })
-    .subscribe((s) => {
-      if (s === 'SUBSCRIBED') loadRecentGames(uid, limitLimit).then(callback).catch(onError);
-    });
-  return () => { void supabase.removeChannel(channel); };
+    .channel(`completed-games-${uid}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'games' }, // Might be too broad
+      () => {
+        loadRecentGames(uid).then(callback).catch(onError);
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 
-async function loadRecentGames(uid: string, limitLimit: number): Promise<RecentCompletedGame[]> {
-  const { data, error } = await supabase.from('games').select('*').contains('player_ids', [uid]).eq('status', 'completed').order('last_updated', { ascending: false }).limit(limitLimit);
+async function loadRecentGames(uid: string): Promise<RecentCompletedGame[]> {
+  const { data, error } = await supabase
+    .from('games')
+    .select('*')
+    .contains('player_ids', [uid])
+    .eq('status', 'completed')
+    .order('last_updated', { ascending: false })
+    .limit(5);
+
   if (error) throw error;
+  
   return data.map(g => ({
     gameId: g.id,
-    players: [],
+    players: g.player_ids.map((pid: string) => ({ uid: pid, displayName: 'Player' })), // Join would be better
     winnerId: g.winner_id,
     finalScores: g.final_scores,
     categoriesUsed: g.categories_used,
-    completedAt: new Date(g.last_updated).getTime(),
+    completedAt: new Date(g.updated_at).getTime(),
     status: 'completed',
     opponentIds: g.player_ids.filter((pid: string) => pid !== uid),
   }));
 }
 
-export async function removeRecentPlayer(uid: string, opponentId: string) {
-  await supabase.from('recent_players').update({ hidden: true, updated_at: new Date().toISOString() }).eq('user_id', uid).eq('opponent_id', opponentId);
+export async function loadMatchupHistory(uid: string, opponentUid: string) {
+  const { data: summary, error: summaryError } = await supabase
+    .from('matchups')
+    .select('*')
+    .eq('user_id', uid)
+    .eq('opponent_id', opponentUid)
+    .single();
+
+  if (summaryError && summaryError.code !== 'PGRST116') throw summaryError;
+
+  const { data: games, error: gamesError } = await supabase
+    .from('games')
+    .select('*')
+    .contains('player_ids', [uid, opponentUid])
+    .eq('status', 'completed')
+    .order('updated_at', { ascending: false })
+    .limit(5);
+
+  if (gamesError) throw gamesError;
+
+  return {
+    summary: summary ? {
+      opponentId: summary.opponent_id,
+      opponentDisplayName: summary.opponent_display_name,
+      opponentPhotoURL: summary.opponent_photo_url,
+      wins: summary.wins,
+      losses: summary.losses,
+      totalGames: summary.total_games,
+      lastPlayedAt: new Date(summary.last_played_at).getTime(),
+    } as MatchupSummary : null,
+    games: games.map(g => ({
+      gameId: g.id,
+      players: [], // Add join/enrichment logic if needed
+      winnerId: g.winner_id,
+      finalScores: g.final_scores,
+      categoriesUsed: g.categories_used,
+      completedAt: new Date(g.updated_at).getTime(),
+      status: 'completed',
+      opponentIds: [opponentUid],
+    }) as RecentCompletedGame),
+  };
+}
+
+export async function removeRecentPlayer(uid: string, opponentUid: string) {
+  const { error } = await supabase
+    .from('recent_players')
+    .update({ hidden: true, updated_at: new Date().toISOString() })
+    .eq('user_id', uid)
+    .eq('opponent_id', opponentUid);
+  if (error) throw error;
+}
+
+export async function updateRecentPlayer(uid: string, opponentUid: string, patch: any) {
+  const { error } = await supabase
+    .from('recent_players')
+    .upsert({
+      user_id: uid,
+      opponent_id: opponentUid,
+      ...patch,
+      updated_at: new Date().toISOString()
+    });
+  if (error) throw error;
+}
+
+export async function recordQuestionStats({
+  uid,
+  category,
+  isCorrect,
+}: {
+  uid: string;
+  category: string;
+  isCorrect: boolean;
+}) {
+  // Use a Postgres RPC for atomic updates
+  const { error } = await supabase.rpc('record_question_stats', {
+    p_uid: uid,
+    p_category: category,
+    p_is_correct: isCorrect
+  });
+  if (error) throw error;
+}
+
+export async function recordCompletedGame({
+  gameId,
+  players,
+  winnerId,
+  finalScores,
+  questions,
+  status,
+  completedAt,
+}: {
+  gameId: string;
+  players: Player[];
+  winnerId: string | null;
+  finalScores: Record<string, number>;
+  questions: TriviaQuestion[];
+  status: 'completed';
+  completedAt: number;
+}) {
+  const categoriesUsed = Array.from(new Set(
+    questions
+      .filter((q) => q.used)
+      .map((q) => q.category)
+  ));
+
+  const { error: gameError } = await supabase
+    .from('games')
+    .update({
+      status: 'completed',
+      winner_id: winnerId,
+      final_scores: finalScores,
+      categories_used: categoriesUsed,
+      stats_recorded_at: new Date(completedAt).toISOString(),
+      updated_at: new Date(completedAt).toISOString(),
+    })
+    .eq('id', gameId);
+
+  if (gameError) throw gameError;
+
+  // Process player profiles and matchups
+  for (const player of players) {
+    const isWinner = winnerId === player.uid;
+    
+    // Increment total stats using RPC
+    await supabase.rpc('increment_player_game_stats', {
+      p_uid: player.uid,
+      p_is_win: isWinner
+    });
+
+    // Matchups
+    for (const opponent of players.filter(p => p.uid !== player.uid)) {
+      const isPlayerWinner = winnerId === player.uid;
+      
+      await supabase.from('matchups').upsert({
+        user_id: player.uid,
+        opponent_id: opponent.uid,
+        opponent_display_name: opponent.name,
+        opponent_photo_url: opponent.avatarUrl,
+        wins: isPlayerWinner ? 1 : 0,
+        losses: isPlayerWinner ? 0 : 1,
+        total_games: 1,
+        last_played_at: new Date(completedAt).toISOString(),
+      }, { onConflict: 'user_id,opponent_id' }); // Handled correctly in Postgres via merge if I write an upsert rpc or just use upsert with increments
+
+      await supabase.from('recent_players').upsert({
+        user_id: player.uid,
+        opponent_id: opponent.uid,
+        display_name: opponent.name,
+        photo_url: opponent.avatarUrl,
+        last_played_at: new Date(completedAt).toISOString(),
+        last_game_id: gameId,
+        hidden: false,
+        updated_at: new Date(completedAt).toISOString(),
+      }, { onConflict: 'user_id,opponent_id' });
+    }
+  }
 }

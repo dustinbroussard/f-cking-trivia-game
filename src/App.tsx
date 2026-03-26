@@ -1,8 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { lazy, Suspense, useState, useEffect, useRef } from 'react';
 import { supabase } from './lib/supabase';
 import { signInWithGoogle, signOutUser, onAuthStateChange } from './services/auth';
@@ -10,24 +5,35 @@ import {
   recordAnswer,
   subscribeToGame,
   createGame,
-  joinGame,
+  joinGameById,
+  getGameByCode,
   updateGame,
   getGameById,
-  persistQuestionsToGame,
-  updatePlayerActivity,
-  abandonGame,
-  setActiveGameQuestion,
-  clearActiveGameQuestion,
-  subscribeToMessages,
+  abandonGame as abandonGameService,
+  updatePlayerActivity as updatePlayerActivityService,
+  persistQuestionsToGame as persistQuestionsToGameService,
+  setActiveGameQuestion as setActiveGameQuestionService,
+  clearActiveGameQuestion as clearActiveGameQuestionService,
   getGameQuestions,
+  getPastGames,
+  subscribeToMessages,
   sendMessage,
 } from './services/gameService';
-
-
+import {
+  acceptInvite,
+  declineInvite,
+  expireInvite,
+  sendInvite,
+  subscribeToIncomingInvites,
+} from './services/inviteService';
 import { ChatMessage, GameAnswer, GameInvite, GameState, MatchupSummary, Player, PlayerProfile, RecentCompletedGame, RecentPlayer, RoastState, TriviaQuestion, UserSettings, getPlayableCategories } from './types';
 import { QUESTION_COLLECTION } from './services/questionCollections';
-import { getQuestionsForSession, markQuestionSeen } from './services/questionRepository';
-import { acceptInvite, declineInvite, expireInvite, sendInvite, subscribeToIncomingInvites } from './services/invites';
+import {
+  ACTIVE_GAME_REPLENISH_MIN_APPROVED,
+  AUTO_REPLENISH_BATCH_SIZE,
+  STARTUP_REPLENISH_MIN_APPROVED,
+} from './services/questionInventoryConfig';
+import { ensureQuestionInventory, getQuestionsForSession, markQuestionSeen } from './services/questionRepository';
 import { GameLobby } from './components/GameLobby';
 import { Wheel } from './components/Wheel';
 import { QuestionCard } from './components/QuestionCard';
@@ -44,22 +50,19 @@ import { publicAsset } from './assets';
 import { motion, AnimatePresence } from 'motion/react';
 import { LogOut, RefreshCcw, Trophy, ArrowLeft, Volume2, VolumeX, Send, Loader2, History, X, Sun, Moon, SlidersHorizontal } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { omitUndefinedFields } from './services/data';
 import { DEFAULT_USER_SETTINGS, getLocalSettings, loadUserSettings, mergeSettings, saveLocalSettings, saveUserSettings } from './services/userSettings';
 import { generateHeckles } from './services/gemini';
 import { notifySafe, requestNotificationPermissionSafe } from './services/notify';
-import {
-  ensurePlayerProfile,
-  loadMatchupHistory,
-  recordCompletedGame,
-  recordQuestionStats,
-  removeRecentPlayer,
-  subscribePlayerProfile,
-  subscribeRecentCompletedGames,
-  subscribeRecentPlayers,
-  updatePlayer,
-} from './services/playerProfiles';
+import { ensurePlayerProfile, loadMatchupHistory, recordCompletedGame, recordQuestionStats, removeRecentPlayer, subscribePlayerProfile, subscribeRecentCompletedGames, subscribeRecentPlayers, updateRecentPlayer } from './services/playerProfiles';
 
+// Hooks
+import { useAuth } from './hooks/useAuth';
+import { useGameStore } from './hooks/useGameStore';
+import { useQuestions } from './hooks/useQuestions';
+import { useSound } from './hooks/useSound';
+
+const QUESTION_TIME_LIMIT_SECONDS = 20;
+const logoSrc = publicAsset('logo.png');
 
 type ResultPhase = 'idle' | 'revealing' | 'explaining' | 'specialEvent';
 type QueuedSpecialEvent =
@@ -75,6 +78,7 @@ type LoadingStep =
   | 'finalizing_round';
 
 const SettingsModal = lazy(() => import('./components/SettingsModal').then((module) => ({ default: module.SettingsModal })));
+const QuestionBankAdmin = lazy(() => import('./components/QuestionBankAdmin').then((module) => ({ default: module.QuestionBankAdmin })));
 
 const QUESTION_LOADING_LINES = [
   'Stealing questions from smarter people...',
@@ -154,21 +158,25 @@ interface MatchupHistoryState {
 }
 
 export default function App() {
-  const QUESTION_TIME_LIMIT_SECONDS = 20;
-  const themeAudioSrc = publicAsset('theme.mp3');
-  const correctAudioSrc = publicAsset('correct.mp3');
-  const wrongAudioSrc = publicAsset('wrong.mp3');
-  const timesUpAudioSrc = publicAsset('times-up.mp3');
-  const wonAudioSrc = publicAsset('won.mp3');
-  const lostAudioSrc = publicAsset('lost.mp3');
-  const logoSrc = publicAsset('logo.png');
+  const { user, hasResolvedInitialAuthState } = useAuth();
+  const { 
+    game, setGame, players, setPlayers, messages, setMessages,
+    playerProfile, recentPlayers, recentCompletedGames, incomingInvites 
+  } = useGameStore(user);
+  const {
+    questions, setQuestions, currentQuestion, setCurrentQuestion,
+    isFetchingQuestions, setIsFetchingQuestions, fetchQuestions, markSeen, refillInventory, activeQuestionIdRef
+  } = useQuestions(user, game?.id);
 
-  const [user, setUser] = useState<any | null>(null);
+  const [settings, setSettings] = useState<UserSettings>(() => getLocalSettings());
+  const {
+    themeAudioRef, correctAudioRef, wrongAudioRef, timesUpAudioRef,
+    wonAudioRef, lostAudioRef, welcomeAudioRef,
+    themeAudioSrc, correctAudioSrc, wrongAudioSrc, timesUpAudioSrc,
+    wonAudioSrc, lostAudioSrc,
+    playSfx, playMusic
+  } = useSound(settings);
 
-  const [game, setGame] = useState<GameState | null>(null);
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [questions, setQuestions] = useState<TriviaQuestion[]>([]);
-  const [currentQuestion, setCurrentQuestion] = useState<TriviaQuestion | null>(null);
   const [isSpinning, setIsSpinning] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [roast, setRoast] = useState<RoastState | null>(null);
@@ -176,11 +184,9 @@ export default function App() {
   const [queuedSpecialEvent, setQueuedSpecialEvent] = useState<QueuedSpecialEvent | null>(null);
 
   // Granular loading states
-  const [hasResolvedInitialAuthState, setHasResolvedInitialAuthState] = useState(false);
-  const [hasResolvedRedirectSignIn, setHasResolvedRedirectSignIn] = useState(false);
+  const [hasResolvedRedirectSignIn, setHasResolvedRedirectSignIn] = useState(true);
   const [isStartingGame, setIsStartingGame] = useState(false);
   const [isJoiningGame, setIsJoiningGame] = useState(false);
-  const [isFetchingQuestions, setIsFetchingQuestions] = useState(false);
   const [loadingStep, setLoadingStep] = useState<LoadingStep>('idle');
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [activeQuestionLoadingLine, setActiveQuestionLoadingLine] = useState(
@@ -192,20 +198,15 @@ export default function App() {
     typeof navigator === 'undefined' ? true : navigator.onLine
   );
   const [isSolo, setIsSolo] = useState(false);
-  const [settings, setSettings] = useState<UserSettings>(() => getLocalSettings());
   const [showSettings, setShowSettings] = useState(false);
+  const [showQuestionBankAdmin, setShowQuestionBankAdmin] = useState(false);
   const [remoteSettingsResolved, setRemoteSettingsResolved] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
   const [seenIncomingMessageCount, setSeenIncomingMessageCount] = useState(0);
-  const [recentPlayers, setRecentPlayers] = useState<RecentPlayer[]>([]);
-  const [playerProfile, setPlayerProfile] = useState<PlayerProfile | null>(null);
-  const [incomingInvites, setIncomingInvites] = useState<GameInvite[]>([]);
   const [inviteFeedback, setInviteFeedback] = useState<string | null>(null);
 
   const [pastGames, setPastGames] = useState<GameState[]>([]);
-  const [recentCompletedGames, setRecentCompletedGames] = useState<RecentCompletedGame[]>([]);
   const [selectedMatchup, setSelectedMatchup] = useState<MatchupHistoryState | null>(null);
   const [isLoadingMatchup, setIsLoadingMatchup] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -228,19 +229,11 @@ export default function App() {
   const [isCheckingForResume, setIsCheckingForResume] = useState(false);
   const [resumeBanner, setResumeBanner] = useState<string | null>(null);
 
-  const themeAudioRef = useRef<HTMLAudioElement>(null);
-  const welcomeAudioRef = useRef<HTMLAudioElement>(null);
-  const correctAudioRef = useRef<HTMLAudioElement>(null);
-  const wrongAudioRef = useRef<HTMLAudioElement>(null);
-  const timesUpAudioRef = useRef<HTMLAudioElement>(null);
-  const wonAudioRef = useRef<HTMLAudioElement>(null);
-  const lostAudioRef = useRef<HTMLAudioElement>(null);
   const prevGameStatus = useRef<string | null>(null);
   const revealTimeoutRef = useRef<number | null>(null);
   const categoryRevealTimeoutRef = useRef<number | null>(null);
   const questionTimeoutRef = useRef<number | null>(null);
   const questionDisplayTimerRef = useRef<number | null>(null);
-  const activeQuestionIdRef = useRef<string | null>(null);
   const questionDeadlineRef = useRef<number | null>(null);
   const questionResolvedRef = useRef(false);
   const resolvedQuestionIdRef = useRef<string | null>(null);
@@ -261,7 +254,7 @@ export default function App() {
   const pendingResumeRestoreRef = useRef<string | null>(null);
   const persistenceWarningShownRef = useRef(false);
 
-  const existingQuestionIds = questions.map((question) => question.questionId || question.id);
+  const existingQuestionIds = questions.map((question) => question.id);
   const playableCategories = getPlayableCategories();
   const themeMode = settings.themeMode;
   const musicEnabled = settings.soundEnabled && settings.musicEnabled;
@@ -269,27 +262,16 @@ export default function App() {
   const isQuestionActive =
     !!currentQuestion &&
     (resultPhase === 'idle' || resultPhase === 'revealing' || resultPhase === 'explaining');
-  const isInitializing = !hasResolvedInitialAuthState || !hasResolvedRedirectSignIn;
+  const isInitializing = !hasResolvedInitialAuthState;
 
-  // This function is no longer needed as per instructions
-  // const reportPersistenceFailure = (
-  //   err: unknown,
-  //   operationType: OperationType,
-  //   path: string | null,
-  //   fallbackMessage: string,
-  // ) => {
-  //   handlePersistenceError(err, operationType, path);
-
-  //   if (isPersistenceQuotaExceeded(err)) {
-  //     if (!persistenceWarningShownRef.current) {
-  //       persistenceWarningShownRef.current = true;
-  //       setError(getPersistenceDisplayMessage(err, fallbackMessage));
-  //     }
-  //     return;
-  //   }
-
-  //   setError(getPersistenceDisplayMessage(err, fallbackMessage));
-  // };
+  const reportServiceFailure = (
+    err: unknown,
+    path: string | null,
+    fallbackMessage: string,
+  ) => {
+    console.error(`[Service Failure] at ${path}:`, err);
+    setError(fallbackMessage);
+  };
 
   const updateSettings = (patch: Partial<UserSettings>) => {
     setSettings((current) => ({
@@ -363,26 +345,17 @@ export default function App() {
     return window.localStorage.getItem(ACTIVE_GAME_STORAGE_KEY);
   };
 
+  const updatePlayerActivity = async (gameId: string, playerUid: string, isResume = false) => {
+    try {
+      await updatePlayerActivityService(gameId, playerUid, isResume);
+    } catch (err) {
+      console.error(`[updatePlayerActivity] Failed for game ${gameId}:`, err);
+    }
+  };
+
   const abandonGame = async (gameId: string) => {
     try {
-      const gameData = await getGameById(gameId);
-      if (!gameData) {
-        persistActiveGameId(null);
-        return;
-      }
-
-      if (gameData.status === 'completed' || gameData.status === 'abandoned') {
-        persistActiveGameId(null);
-        return;
-      }
-
-      await updateGame(gameId, {
-        status: 'abandoned',
-        current_question_id: null,
-        current_question_category: null,
-        current_question_started_at: null,
-        last_updated: new Date().toISOString(),
-      });
+      await abandonGameService(gameId);
       persistActiveGameId(null);
     } catch (err) {
       console.error(`[abandonGame] Failed to abandon game ${gameId}:`, err);
@@ -408,20 +381,17 @@ export default function App() {
   };
 
 
-  const recordRecentPlayer = async (ownerId: string, player: Player, gameId: string) => {
+  const recordRecentPlayer = async (ownerUid: string, player: Player, gameId: string) => {
     try {
-      await updatePlayer(ownerId, player.uid, {
-        uid: player.uid,
+      await updateRecentPlayer(ownerUid, player.uid, {
         display_name: player.name,
         photo_url: player.avatarUrl || '',
         last_played_at: new Date().toISOString(),
         last_game_id: gameId,
         hidden: false,
-        updated_at: new Date().toISOString(),
       });
     } catch (err) {
-      console.error(`[recordRecentPlayer] Failed to record recent player ${player.uid} for user ${ownerId}:`, err);
-      setError('Failed to record recent player.');
+      console.error(`[recordRecentPlayer] Failed to record recent player ${player.uid}:`, err);
     }
   };
 
@@ -448,10 +418,8 @@ export default function App() {
       const isNewJoiner = !gameData.playerIds.includes(user.id);
 
       if (isNewJoiner) {
-        await joinGame(gameId, user.id, user.displayName || 'Player', _avatarUrl);
+        await joinGame(gameId, user.id);
       }
-
-
 
       setLoadingStep('finalizing_lobby');
       setIsSolo(false);
@@ -463,38 +431,49 @@ export default function App() {
     }
   };
 
-
   const resolveWheelCategory = (category: string) => {
     if (category !== 'Random') return category;
     return playableCategories[Math.floor(Math.random() * playableCategories.length)];
   };
 
+  const persistQuestionsToGame = async (gameId: string, sessionQuestions: TriviaQuestion[]) => {
+    try {
+      const questionIds = sessionQuestions.map(q => q.id);
+      await persistQuestionsToGameService(gameId, questionIds);
+    } catch (err) {
+      console.error(`[persistQuestionsToGame] Failed for game ${gameId}:`, err);
+    }
+  };
+
+  const syncGameQuestionIds = async (gameId: string, questionIds: string[]) => {
+    try {
+      await updateGame(gameId, { question_ids: questionIds });
+    } catch (err) {
+      console.error(`[syncGameQuestionIds] Failed for game ${gameId}:`, err);
+    }
+  };
+
   const setActiveGameQuestion = async (gameId: string, category: string, questionId: string, questionIndex: number, startedAt: number) => {
     try {
-      await updateGame(gameId, {
-        current_question_id: questionId,
-        current_question_category: category,
-        current_question_index: questionIndex,
-        current_question_started_at: startedAt,
-        last_updated: new Date().toISOString(),
-      });
+      await setActiveGameQuestionService(gameId, category, questionId, questionIndex, startedAt);
     } catch (err) {
-      console.error(`[setActiveGameQuestion] Failed to set active question for game ${gameId}:`, err);
-      setError('Failed to set active question.');
+      console.error(`[setActiveGameQuestion] Failed for game ${gameId}:`, err);
     }
   };
 
   const clearActiveGameQuestion = async (gameId: string) => {
     try {
-      await updateGame(gameId, {
-        current_question_id: null,
-        current_question_category: null,
-        current_question_started_at: null,
-        last_updated: new Date().toISOString(),
-      });
+      await clearActiveGameQuestionService(gameId);
     } catch (err) {
-      console.error(`[clearActiveGameQuestion] Failed to clear active question for game ${gameId}:`, err);
-      setError('Failed to clear active question.');
+      console.error(`[clearActiveGameQuestion] Failed for game ${gameId}:`, err);
+    }
+  };
+
+  const recordGameAnswer = async (gameId: string, questionId: string, playerUid: string, answer: GameAnswer) => {
+    try {
+      await recordAnswer(gameId, questionId, playerUid, answer);
+    } catch (err) {
+      console.error(`[recordGameAnswer] Failed for game ${gameId}:`, err);
     }
   };
 
@@ -521,7 +500,7 @@ export default function App() {
       return;
     }
 
-    if (event.event === 'MATCH_LOSS' && sfxEnabled && lostAudioRef.current) {
+    if (event.event === 'MATCH_LOSS' && lostAudioRef.current) {
       lostAudioRef.current.currentTime = 0;
       lostAudioRef.current.play().catch(console.error);
     }
@@ -574,7 +553,7 @@ export default function App() {
 
   const triggerTrashTalk = (event: TrashTalkEvent) => {
     if (!settings.commentaryEnabled) {
-      if (event === 'MATCH_LOSS' && sfxEnabled && lostAudioRef.current) {
+      if (event === 'MATCH_LOSS' && lostAudioRef.current) {
         lostAudioRef.current.currentTime = 0;
         lostAudioRef.current.play().catch(console.error);
       }
@@ -648,34 +627,10 @@ export default function App() {
     setQuestionClockNow(Date.now());
   }, [currentQuestion?.id]);
 
-  // Initial Auth state handling
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      setHasResolvedInitialAuthState(true);
-      setHasResolvedRedirectSignIn(true);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      setHasResolvedInitialAuthState(true);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
   useEffect(() => {
     if (!currentQuestion || !user?.id) return;
 
-    const questionId = currentQuestion.questionId || currentQuestion.id;
-    markQuestionSeen({
-      userId: user.id,
-      questionId,
-      gameId: game?.id,
-    }).catch((err) => {
-      console.error('[seenQuestions] Failed to record seen question:', err);
-    });
+    markSeen(currentQuestion.id);
   }, [currentQuestion?.id, user?.id, game?.id]);
 
 
@@ -717,8 +672,7 @@ export default function App() {
       categoryRevealTimeoutRef.current = null;
       if (game?.id) {
         void setActiveGameQuestion(game.id, category, question.id, questionIndex, questionStartedAt).catch((err) => {
-          console.error(`[setActiveGameQuestion] Failed for game ${game.id}:`, err);
-          setError('Failed to set active question.');
+          console.error(err);
         });
       }
     }, 1100);
@@ -808,8 +762,8 @@ export default function App() {
   useEffect(() => {
     if (!shouldShowOpponentHeckles || activeHeckle || heckleQueue.length > 0) return;
 
-    const opponent = players.find((player) => player.uid !== user?.id);
-    const currentPlayer = players.find((player) => player.uid === user?.id);
+    const opponent = players.find((player) => player.uid !== user?.uid);
+    const currentPlayer = players.find((player) => player.uid === user?.uid);
     if (!opponent || !user || !game) return;
 
     const turnKey = `${game.id}:${game.currentTurn}:${currentPlayer?.score ?? 0}:${opponent.score ?? 0}:${opponent.streak ?? 0}`;
@@ -842,7 +796,7 @@ export default function App() {
   }, []);
 
   const continueAfterExplanation = () => {
-    if (game?.status === 'completed' && game.winnerId === user?.id) {
+    if (game?.status === 'completed' && game.winnerId === user?.uid) {
       setQueuedSpecialEvent(null);
       clearCurrentTurnView();
       if (game.id) {
@@ -857,8 +811,7 @@ export default function App() {
     clearCurrentTurnView();
     if (game?.id) {
       void clearActiveGameQuestion(game.id).catch((err) => {
-        console.error(`[clearActiveGameQuestion] Failed for game ${game.id}:`, err);
-        setError('Failed to clear active question.');
+        console.error(err);
       });
     }
 
@@ -871,16 +824,16 @@ export default function App() {
   };
 
   useEffect(() => {
-    document.documentElement.dataset.theme = themeMode;
-    document.body.dataset.theme = themeMode;
-  }, [themeMode]);
+    document.documentElement.dataset.theme = settings.themeMode;
+    document.body.dataset.theme = settings.themeMode;
+  }, [settings.themeMode]);
 
   useEffect(() => {
     saveLocalSettings(settings);
   }, [settings]);
 
   useEffect(() => {
-    if (!user?.id) {
+    if (!user?.uid) {
       setRemoteSettingsResolved(true);
       return;
     }
@@ -897,7 +850,6 @@ export default function App() {
         if (import.meta.env.DEV) {
           console.warn('[userSettings] Failed to load remote settings:', err);
         }
-        setError('Failed to load user settings.');
       })
       .finally(() => {
         if (!cancelled) {
@@ -908,10 +860,10 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [user?.id]);
+  }, [user?.uid]);
 
   useEffect(() => {
-    if (!user?.id || !remoteSettingsResolved) return;
+    if (!user?.uid || !remoteSettingsResolved) return;
 
     const serialized = JSON.stringify(settings);
     if (lastSavedRemoteSettingsRef.current === serialized) return;
@@ -924,9 +876,8 @@ export default function App() {
         if (import.meta.env.DEV) {
           console.warn('[userSettings] Failed to save remote settings:', err);
         }
-        setError('Failed to save user settings.');
       });
-  }, [settings, user?.id, remoteSettingsResolved]);
+  }, [settings, user?.uid, remoteSettingsResolved]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -940,35 +891,6 @@ export default function App() {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
-
-  useEffect(() => {
-    // Redirect sign-in completion is no longer needed with Supabase OAuth
-  }, []);
-
-  useEffect(() => {
-    const subscription = onAuthStateChange((u) => {
-      setUser(u);
-      setHasResolvedInitialAuthState(true);
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!user) {
-      setPlayerProfile(null);
-      return;
-    }
-
-    ensurePlayerProfile(user).catch((err) => {
-      if (import.meta.env.DEV) {
-        console.warn('[playerProfile] Failed to ensure profile:', err);
-      }
-      setError('Failed to ensure player profile.');
-    });
-  }, [user]);
 
   useEffect(() => {
     if (!game?.id) return;
@@ -1010,15 +932,14 @@ export default function App() {
 
         setIsSolo(storedGame.playerIds.length === 1);
         setResumePrompt({
-          game: storedGame,
+          game: storedGame as GameState,
           isSolo: storedGame.playerIds.length === 1,
         });
         setIsCheckingForResume(false);
       })
       .catch((err) => {
         if (!cancelled) {
-          console.error(`[resumeGame] Failed to check for resumable game ${storedGameId}:`, err);
-          setError('Failed to check for a resumable game.');
+          console.error('[resumeCheck] Failed to check for resumable game:', err);
           setIsCheckingForResume(false);
         }
       });
@@ -1028,78 +949,6 @@ export default function App() {
     };
   }, [game, isCheckingForResume, resumePrompt, user?.id]);
 
-  useEffect(() => {
-    if (!user?.id) {
-      setRecentPlayers([]);
-      return;
-    }
-
-    return subscribeRecentPlayers(
-      user.id,
-      setRecentPlayers,
-      (err) => {
-        setRecentPlayers([]);
-        console.error(`[recentPlayers] Failed to subscribe for user ${user.id}:`, err);
-        setError('Failed to load recent players.');
-      }
-    );
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (!user?.id) {
-      setPlayerProfile(null);
-      return;
-    }
-
-    return subscribePlayerProfile(
-      user.id,
-      setPlayerProfile,
-      (err) => {
-        setPlayerProfile(null);
-        console.error(`[playerProfile] Failed to subscribe for user ${user.id}:`, err);
-        setError('Failed to load your player profile.');
-      }
-    );
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (!user?.id) {
-      setRecentCompletedGames([]);
-      return;
-    }
-
-    return subscribeRecentCompletedGames(
-      user.id,
-      (games) => {
-        setRecentCompletedGames(games);
-        setPastGames(games as any);
-
-      },
-      (err) => {
-        setRecentCompletedGames([]);
-        console.error(`[gameHistory] Failed to subscribe for user ${user.id}:`, err);
-        setError('Failed to load recent match history.');
-      }
-    );
-
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (!user?.id) {
-      setIncomingInvites([]);
-      return;
-    }
-
-    return subscribeToIncomingInvites(
-      user.id,
-      setIncomingInvites,
-      (err) => {
-        setIncomingInvites([]);
-        console.error(`[invites] Snapshot listener failed for user ${user.id}:`, err);
-        setError('Failed to load incoming invites.');
-      }
-    );
-  }, [user?.id]);
 
   useEffect(() => {
     if (!inviteFeedback) return;
@@ -1143,24 +992,15 @@ export default function App() {
   // Fetch past games history
   useEffect(() => {
     if (!user?.id) return;
-    const unsub = subscribeRecentCompletedGames(
-      user.id,
-      (games) => {
-        setRecentCompletedGames(games);
-      },
-      (err) => {
-        setRecentCompletedGames([]);
-        console.error(`[gameHistory] Error fetching history for user ${user.id}:`, err);
-        setError('Failed to load match history.');
-      },
-      10 // limit
-    );
-    return () => unsub();
+    getPastGames(user.id).then(setPastGames).catch(err => {
+      console.error("Error fetching history:", err);
+      setPastGames([]);
+    });
   }, [user?.id]);
 
   useEffect(() => {
     if (!user) {
-      if (musicEnabled) {
+      if (settings.soundEnabled && settings.musicEnabled) {
         if (themeAudioRef.current) {
           themeAudioRef.current.volume = 0.3;
           themeAudioRef.current.play().catch(console.error);
@@ -1178,12 +1018,12 @@ export default function App() {
         }
       }
     }
-  }, [musicEnabled, user]);
+  }, [settings.soundEnabled, settings.musicEnabled, user]);
 
   useEffect(() => {
     if (game?.status === 'completed' && prevGameStatus.current !== 'completed') {
-      if (sfxEnabled) {
-        if (game.winnerId === user?.id) {
+      if (settings.soundEnabled && settings.sfxEnabled) {
+        if (game.winnerId === user?.uid) {
           if (wonAudioRef.current) {
             wonAudioRef.current.currentTime = 0;
             wonAudioRef.current.play().catch(console.error);
@@ -1191,13 +1031,13 @@ export default function App() {
         }
       }
 
-      if (game.winnerId && game.winnerId !== user?.id && !hasTriggeredMatchLossRef.current) {
+      if (game.winnerId && game.winnerId !== user?.uid && !hasTriggeredMatchLossRef.current) {
         hasTriggeredMatchLossRef.current = true;
         triggerTrashTalk('MATCH_LOSS');
       }
     }
     prevGameStatus.current = game?.status || null;
-  }, [game?.status, game?.winnerId, user?.id, sfxEnabled, lastTrashTalkEvent]);
+  }, [game?.status, game?.winnerId, user?.uid, settings.soundEnabled, settings.sfxEnabled, lastTrashTalkEvent]);
 
   useEffect(() => {
     if (game?.status !== 'abandoned') return;
@@ -1227,36 +1067,10 @@ export default function App() {
     setQueuedSpecialEvent((current) => current?.kind === 'TRASH_TALK' ? null : current);
   }, [settings.commentaryEnabled]);
 
-  // Game Real-time Listener (Supabase)
-  useEffect(() => {
-    if (!game?.id) return;
-
-    const unsubGame = subscribeToGame(game.id, (syncedGame) => {
-      setGame(syncedGame);
-      setPlayers(syncedGame.players as Player[]);
-      
-      if (syncedGame.questionIds?.length > 0) {
-        getGameQuestions(game.id).then(setQuestions).catch(err => {
-          console.error('[gameQuestions] Failed to fetch:', err);
-          setError('Failed to load game questions.');
-        });
-      }
-    });
-
-    const unsubMessages = subscribeToMessages(game.id, (mList) => {
-      setMessages(mList as any); 
-    });
-
-
-    return () => {
-      unsubGame();
-      unsubMessages();
-    };
-  }, [game?.id]);
-
 
   const handleResumeGame = async () => {
     if (!resumePrompt || !user?.id) return;
+
 
     const resumedGame = resumePrompt.game;
     if (!resumePrompt.isSolo) {
@@ -1271,8 +1085,7 @@ export default function App() {
     try {
       await updatePlayerActivity(resumedGame.id, user.id, true);
     } catch (err) {
-      console.error(`[updatePlayerActivity] Failed for game ${resumedGame.id}, player ${user.id}:`, err);
-      setError('Failed to update player activity.');
+      console.error(err);
     }
   };
 
@@ -1289,14 +1102,14 @@ export default function App() {
     try {
       await abandonGame(resumeGameId);
     } catch (err) {
-      console.error(`[abandonGame] Failed to abandon game ${resumeGameId}:`, err);
+      console.error(err);
       persistActiveGameId(null);
-      setError('Failed to abandon game.');
     }
   };
 
   useEffect(() => {
     if (!pendingResumeRestoreRef.current || pendingResumeRestoreRef.current !== game?.id || !user?.id) return;
+
 
     const questionOrder = game.questionIds || [];
     const currentQuestionId = game.currentQuestionId || (
@@ -1328,7 +1141,7 @@ export default function App() {
       return;
     }
 
-    const restoredQuestion = questions.find((question) => question.id === currentQuestionId || question.questionId === currentQuestionId);
+    const restoredQuestion = questions.find((question) => question.id === currentQuestionId);
     if (!restoredQuestion) {
       setRoast(null);
       setSelectedAnswer(null);
@@ -1353,18 +1166,14 @@ export default function App() {
     setCorrectAnswer(restoredQuestion.correctIndex);
     setShouldBlurQuestionBackground(true);
     setRoast({
-      id: Math.random().toString(),
-      text: '',
-      targetId: user.id,
       explanation: restoredQuestion.explanation,
       isCorrect: currentQuestionAnswer.isCorrect,
-      questionId: restoredQuestion.questionId || restoredQuestion.id,
+      questionId: restoredQuestion.id,
       userId: user.id,
       gameId: game.id,
     });
-
     setResultPhase('explaining');
-  }, [game, questions, user?.id]);
+  }, [game, questions, user?.uid]);
 
   useEffect(() => {
     if (!game || !user || players.length === 0) {
@@ -1416,10 +1225,10 @@ export default function App() {
     }
 
     prevPlayersRef.current = players;
-  }, [players, game?.id, user?.id, lastTrashTalkEvent]);
+  }, [players, game?.id, user?.uid, lastTrashTalkEvent]);
 
   useEffect(() => {
-    if (!game?.id || !user?.id || isSolo || players.length < 2) return;
+    if (!game?.id || !user?.uid || isSolo || players.length < 2) return;
 
     const opponent = players.find((player) => player.uid !== user.id);
     if (!opponent) return;
@@ -1435,12 +1244,11 @@ export default function App() {
         if (import.meta.env.DEV) {
           console.warn('[recentPlayers] Failed to record:', err);
         }
-        setError('Failed to record recent player.');
       });
-  }, [game?.id, isSolo, players, user?.id]);
+  }, [game?.id, isSolo, players, user?.uid]);
 
   useEffect(() => {
-    if (!game?.id || !user?.id || game.status !== 'active' || isSolo || players.length < 2) return;
+    if (!game?.id || !user?.uid || game.status !== 'active' || isSolo || players.length < 2) return;
     if (game.currentTurn !== user.id) return;
 
     const notificationKey = `${game.id}:${game.currentTurn}:${game.status}`;
@@ -1454,17 +1262,16 @@ export default function App() {
       tag: `turn-${game.id}`,
       onClickFocusWindow: true,
     });
-  }, [game?.id, game?.currentTurn, game?.status, isSolo, logoSrc, players, user?.id]);
+  }, [game?.id, game?.currentTurn, game?.status, isSolo, logoSrc, players, user?.uid]);
 
   const handleSignIn = async () => {
     try {
       await signInWithGoogle();
     } catch (err: any) {
-      console.error('[signIn] Error:', err);
-      setError(err?.message || 'Failed to sign in.');
+      console.error('[handleSignIn] Failed:', err);
+      setError(err.message || 'Failed to sign in.');
     }
   };
-
 
   const startSoloGame = async (avatarUrl: string) => {
     if (!user) {
@@ -1475,39 +1282,9 @@ export default function App() {
     setLoadingStep('creating_match');
     setIsSolo(true);
 
-    const gameId = `solo-${user.id}-${Date.now()}`;
-    const newGame: GameState = {
-      id: gameId,
-      code: 'SOLO',
-      status: 'active',
-      hostId: user.id,
-      playerIds: [user.id],
-      currentTurn: user.id,
-      winnerId: null,
-      currentQuestionId: null,
-      currentQuestionCategory: null,
-      currentQuestionIndex: -1,
-      currentQuestionStartedAt: null,
-      questionIds: [],
-      answers: {},
-      finalScores: {},
-      categoriesUsed: [],
-      lastUpdated: Date.now()
-    };
-
-
-    const initialPlayer: Player = {
-      uid: user.id,
-      name: user.displayName || 'Player 1',
-      score: 0,
-      streak: 0,
-      completedCategories: [],
-      avatarUrl,
-      lastActive: Date.now(),
-    };
-
     try {
-      await createGame(newGame, initialPlayer);
+      const newGame = await createGame(user.id, user.displayName || 'Player 1', avatarUrl, true);
+      const gameId = newGame.id;
 
       setIsFetchingQuestions(true);
       setLoadingStep('loading_questions');
@@ -1517,14 +1294,12 @@ export default function App() {
         excludeQuestionIds: existingQuestionIds,
         userId: user.id,
       });
-      await persistQuestionsToGame(gameId, initialQuestions.map((question) => question.questionId || question.id));
-
-      setIsFetchingQuestions(false);
-      setLoadingStep('finalizing_lobby');
-
+      await persistQuestionsToGameService(gameId, initialQuestions.map(q => q.id));
+      kickOffInventoryReplenishment(playableCategories);
+      
       setGame(newGame);
     } catch (err) {
-      console.error(`[startSoloGame] Failed to start solo game ${gameId}:`, err);
+      console.error(err);
       setError("Failed to start game.");
     } finally {
       setIsStartingGame(false);
@@ -1543,58 +1318,25 @@ export default function App() {
     setLoadingStep('creating_match');
     setIsSolo(false);
 
-    const code = Math.floor(1000 + Math.random() * 9000).toString();
-    const gameId = `multi-${code}-${Date.now()}`;
-
-    const newGame: GameState = {
-      id: gameId,
-      code,
-      status: 'waiting',
-      hostId: user.id,
-      playerIds: [user.id],
-      currentTurn: user.id,
-      winnerId: null,
-      currentQuestionId: null,
-      currentQuestionCategory: null,
-      currentQuestionIndex: -1,
-      currentQuestionStartedAt: null,
-      questionIds: [],
-      answers: {},
-      finalScores: {},
-      categoriesUsed: [],
-      lastUpdated: Date.now()
-    };
-
-
-    const initialPlayer: Player = {
-      uid: user.id,
-      name: user.displayName || 'Host',
-      score: 0,
-      streak: 0,
-      completedCategories: [],
-      avatarUrl,
-      lastActive: Date.now(),
-    };
-
     try {
-      await createGame(newGame, initialPlayer);
+      const newGame = await createGame(user.id, user.displayName || 'Host', avatarUrl, false);
+      const gameId = newGame.id;
+
       setIsFetchingQuestions(true);
       setLoadingStep('loading_questions');
       const initialQuestions = await getQuestionsForSession({
         categories: playableCategories,
         count: 3,
-        excludeQuestionIds: questions.map(q => q.id),
+        excludeQuestionIds: existingQuestionIds,
         userId: user.id,
       });
-      const nextQuestionIds = initialQuestions.map((q) => q.questionId || q.id);
-      await persistQuestionsToGame(gameId, nextQuestionIds);
-      setIsFetchingQuestions(false);
-      setLoadingStep('finalizing_lobby');
+      await persistQuestionsToGameService(gameId, initialQuestions.map(q => q.id));
+      kickOffInventoryReplenishment(playableCategories);
+      
       setGame(newGame);
     } catch (err) {
-
-      console.error(`[startMultiplayerGame] Failed to start multiplayer game ${gameId}:`, err);
-      setError('Failed to start multiplayer game.');
+      console.error('[startMultiplayerGame] Failed:', err);
+      setError("Failed to start multiplayer game.");
     } finally {
       setIsStartingGame(false);
       setIsFetchingQuestions(false);
@@ -1602,8 +1344,7 @@ export default function App() {
     }
   };
 
-  const handleJoinGame = async (code: string, avatarUrl: string) => {
-
+  const joinGame = async (code: string, avatarUrl: string) => {
     if (!user) {
       await handleSignIn();
       return;
@@ -1613,16 +1354,17 @@ export default function App() {
     setLoadingStep('joining_match');
 
     try {
-      const gameData = await getGameById(code, true); // Assuming getGameById can take code and search
-      if (!gameData) {
+      const waitingGame = await getGameByCode(code);
+
+      if (!waitingGame) {
         setError("Game not found or already started.");
         return;
       }
 
-      await joinWaitingGameById(gameData.id, avatarUrl);
+      await joinGameById(waitingGame.id, user.id, user.displayName || 'Player', avatarUrl);
     } catch (err) {
-      console.error(`[joinGame] Failed to join game with code ${code}:`, err);
-      setError('Failed to join game.');
+      console.error('[joinGame] Failed:', err);
+      setError("Failed to join game.");
     } finally {
       setIsJoiningGame(false);
       setLoadingStep('idle');
@@ -1640,41 +1382,9 @@ export default function App() {
     setLoadingStep('creating_match');
     setIsSolo(false);
 
-    const code = Math.floor(1000 + Math.random() * 9000).toString();
-    const gameId = `multi-${code}-${Date.now()}`;
-
-    const newGame: GameState = {
-      id: gameId,
-      code,
-      status: 'waiting',
-      hostId: user.id,
-      playerIds: [user.id],
-      currentTurn: user.id,
-      winnerId: null,
-      currentQuestionId: null,
-      currentQuestionCategory: null,
-      currentQuestionIndex: -1,
-      currentQuestionStartedAt: null,
-      questionIds: [],
-      answers: {},
-      finalScores: {},
-      categoriesUsed: [],
-      lastUpdated: Date.now()
-    };
-
-
-    const initialPlayer: Player = {
-      uid: user.id,
-      name: user.displayName || 'Host',
-      score: 0,
-      streak: 0,
-      completedCategories: [],
-      avatarUrl,
-      lastActive: Date.now(),
-    };
-
     try {
-      await createGame(newGame, initialPlayer);
+      const newGame = await createGame(user.id, user.displayName || 'Host', avatarUrl, false);
+      const gameId = newGame.id;
 
       setIsFetchingQuestions(true);
       setLoadingStep('loading_questions');
@@ -1684,11 +1394,9 @@ export default function App() {
         excludeQuestionIds: existingQuestionIds,
         userId: user.id,
       });
-      await persistQuestionsToGame(gameId, initialQuestions.map(q => q.id));
-
-      setIsFetchingQuestions(false);
-      setLoadingStep('finalizing_lobby');
-
+      await persistQuestionsToGameService(gameId, initialQuestions.map(q => q.id));
+      kickOffInventoryReplenishment(playableCategories);
+      
       await sendInvite({
         uid: user.id,
         displayName: user.displayName || 'Host',
@@ -1698,8 +1406,8 @@ export default function App() {
       setInviteFeedback(`Invite sent to ${player.displayName}`);
       setGame(newGame);
     } catch (err) {
-      console.error(`[inviteRecentPlayer] Failed to send invite to ${player.uid}:`, err);
-      setError('Failed to send invite.');
+      console.error('[inviteRecentPlayer] Failed:', err);
+      setError("Failed to send invite.");
     } finally {
       setIsStartingGame(false);
       setIsFetchingQuestions(false);
@@ -1718,17 +1426,12 @@ export default function App() {
     setLoadingStep('joining_match');
 
     try {
-      const joined = await joinWaitingGameById(invite.gameId, avatarUrl);
-      if (!joined) {
-        await expireInvite(invite.id, user.id);
-        return;
-      }
-
+      await joinGameById(invite.gameId, user.id, user.displayName || 'Player', avatarUrl);
       await acceptInvite(invite.id, user.id);
       setInviteFeedback(`Joined ${invite.fromDisplayName}'s match`);
     } catch (err) {
-      console.error(`[handleAcceptInvite] Failed to accept invite ${invite.id} for user ${user.id}:`, err);
-      setError('Failed to accept invite.');
+      console.error('[handleAcceptInvite] Failed:', err);
+      setError("Failed to accept invite.");
     } finally {
       setIsJoiningGame(false);
       setLoadingStep('idle');
@@ -1742,13 +1445,13 @@ export default function App() {
       await declineInvite(invite.id, user.id);
       setInviteFeedback(`Declined invite from ${invite.fromDisplayName}`);
     } catch (err) {
-      console.error(`[handleDeclineInvite] Failed to decline invite ${invite.id} for user ${user.id}:`, err);
-      setError('Failed to decline invite.');
+      console.error('[handleDeclineInvite] Failed:', err);
+      setError("Failed to decline invite.");
     }
   };
 
   const handleInspectMatchup = async (player: RecentPlayer) => {
-    if (!user?.id) return;
+    if (!user?.uid) return;
 
     setIsLoadingMatchup(true);
     try {
@@ -1759,8 +1462,7 @@ export default function App() {
         games: matchup.games,
       });
     } catch (err) {
-      console.error(`[handleInspectMatchup] Failed to load matchup history for user ${user.id} and opponent ${player.uid}:`, err);
-      setError('Failed to load matchup history.');
+      reportServiceFailure(err, `users/${user.id}/matchups/${player.uid}`, 'Failed to load matchup history.');
     } finally {
       setIsLoadingMatchup(false);
     }
@@ -1775,8 +1477,7 @@ export default function App() {
         setSelectedMatchup(null);
       }
     } catch (err) {
-      console.error(`[handleRemoveRecentPlayer] Failed to remove recent player ${player.uid} for user ${user.id}:`, err);
-      setError('Failed to remove recent player.');
+      reportServiceFailure(err, `users/${user.id}/recentPlayers/${player.uid}`, 'Failed to remove recent player.');
     }
   };
 
@@ -1798,9 +1499,17 @@ export default function App() {
     const available = questions.filter(q => !q.used && q.category === resolvedCategory);
     if (available.length > 0) {
       const q = available[Math.floor(Math.random() * available.length)];
-      const questionId = q.questionId || q.id;
+      const questionId = q.id;
       const questionIndex = game.questionIds?.indexOf(questionId) ?? -1;
       showCategoryReveal(resolvedCategory, q, questionIndex >= 0 ? questionIndex : 0);
+      ensureQuestionInventory({
+        category: resolvedCategory,
+        difficulty: q.difficulty || 'medium',
+        minimumApproved: ACTIVE_GAME_REPLENISH_MIN_APPROVED,
+        replenishBatchSize: AUTO_REPLENISH_BATCH_SIZE,
+      }).catch((err) => {
+        console.warn(`[questionInventory] Failed for ${resolvedCategory}/${q.difficulty || 'medium'}:`, err);
+      });
     } else {
       // Fetch more questions if needed
       setIsFetchingQuestions(true);
@@ -1809,27 +1518,35 @@ export default function App() {
         categories: [resolvedCategory],
         count: 3,
         excludeQuestionIds: existingQuestionIds,
-        userId: user!.id,
+        userId: user!.uid,
       }).then(newQs => {
         if (newQs.length > 0) {
           setLoadingStep('finalizing_round');
           const q = newQs[0];
           const nextQuestionIds = [
             ...(game.questionIds || []),
-            ...newQs.map((question) => question.questionId || question.id),
+            ...newQs.map((question) => question.id),
           ];
-          persistQuestionsToGame(game!.id, newQs.map(q => q.id))
-            .then(() => updateGame(game!.id, { questionIds: nextQuestionIds }))
-
+          persistQuestionsToGameService(game!.id, newQs.map(q => q.id))
+            .then(() => syncGameQuestionIds(game!.id, nextQuestionIds))
             .then(() => {
-              const questionId = q.questionId || q.id;
+              const questionId = q.id;
               const questionIndex = nextQuestionIds.indexOf(questionId);
               showCategoryReveal(resolvedCategory, q, questionIndex >= 0 ? questionIndex : 0);
             })
             .catch((err) => {
-              console.error(`[persistQuestionsToGame] Failed for game ${game!.id}:`, err);
-              setError('Failed to persist questions.');
+              console.error(`[onSpinComplete] Failed for game ${game!.id}:`, err);
             });
+          ensureQuestionInventory({
+            category: resolvedCategory,
+            difficulty: q.difficulty || 'medium',
+            minimumApproved: ACTIVE_GAME_REPLENISH_MIN_APPROVED,
+            replenishBatchSize: AUTO_REPLENISH_BATCH_SIZE,
+          }).catch((err) => {
+            if (import.meta.env.DEV) {
+              console.warn(`[questionInventory] Failed for ${resolvedCategory}/${q.difficulty || 'medium'}:`, err);
+            }
+          });
         } else {
           setError("Failed to load questions. Please try again.");
         }
@@ -1900,11 +1617,10 @@ export default function App() {
 
     const currentPlayer = players.find(p => p.uid === user.id);
     const gameAnswer: GameAnswer = {
-      correctIndex: resolvedIndex,
+      answerIndex: resolvedIndex,
       submittedAt,
       isCorrect,
       source,
-      timeTaken: submittedAt - (game.currentQuestionStartedAt ? new Date(game.currentQuestionStartedAt as any).getTime() : Date.now()),
     };
     setResultPhase('revealing');
 
@@ -1917,23 +1633,30 @@ export default function App() {
         category: currentQuestion.category,
         isCorrect
       }).catch(err => {
-        console.error('[playerProfile] Failed to record question stats:', err);
-        setError('Failed to record question stats.');
+        console.warn('[playerProfile] Failed to record question stats:', err);
       });
 
       if (isCorrect) {
         const newStreak = (currentPlayer?.streak || 0) + 1;
         const alreadyCompleted = currentPlayer?.completedCategories.includes(currentQuestion.category);
         const earnedNewTrophy = !alreadyCompleted;
+        const newCompletedCategories = alreadyCompleted 
+          ? currentPlayer?.completedCategories || []
+          : [...(currentPlayer?.completedCategories || []), currentQuestion.category];
 
-        await updateGame(game.id, {
-          players: players.map(p => p.uid === user.id ? {
-            ...p,
-            score: (p.score || 0) + 1,
-            streak: newStreak,
-            completedCategories: alreadyCompleted ? p.completedCategories : [...(p.completedCategories || []), currentQuestion.category]
-          } : p)
+        const updatedPlayers = players.map(p => {
+          if (p.uid === user.id) {
+            return {
+              ...p,
+              score: (p.score || 0) + 1,
+              streak: newStreak,
+              completedCategories: newCompletedCategories
+            };
+          }
+          return p;
         });
+
+        await updateGame(game.id, { players: updatedPlayers });
 
         if (lastAnswerCorrect && !earnedNewTrophy && !manualPickReady) {
           setManualPickReady(true);
@@ -1942,46 +1665,21 @@ export default function App() {
         setLastAnswerCorrect(true);
 
         // Check for win
-        const updatedPlayer = { ...currentPlayer!, completedCategories: [...(currentPlayer?.completedCategories || []), currentQuestion.category] };
-        if (new Set(updatedPlayer.completedCategories).size >= playableCategories.length) {
+        if (newCompletedCategories.length >= playableCategories.length) {
           setManualPickReady(false);
           setQueuedSpecialEvent(null);
           const completedAt = Date.now();
-          const winnerId = user.id;
-          const finalScores = players.reduce<Record<string, number>>((scores, player) => {
-            scores[player.uid] = player.uid === user.id ? (player.score || 0) + 1 : (player.score || 0);
+          const finalScores = updatedPlayers.reduce<Record<string, number>>((scores, p) => {
+            scores[p.uid] = p.score || 0;
             return scores;
           }, {});
+
           await updateGame(game.id, {
             status: 'completed',
-            winner_id: winnerId,
-            completed_at: new Date(completedAt).toISOString(),
+            winner_id: user.id,
             final_scores: finalScores,
-            last_updated: new Date().toISOString()
           });
-          
-          await recordCompletedGame({
-            gameId: game.id,
-            players: players.map((player) => (
-              player.uid === user.id
-                ? {
-                    ...player,
-                    score: (player.score || 0) + 1,
-                    streak: newStreak,
-                    completedCategories: updatedPlayer.completedCategories,
-                  }
-                : player
-            )),
-            winnerId: user.id,
-            finalScores,
-            questions: questions.map((question) => (
-              question.id === currentQuestion.id
-                ? { ...question, used: true }
-                : question
-            )),
-            status: 'completed',
-            completedAt,
-          });
+
           confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
         }
       } else {
@@ -1990,29 +1688,24 @@ export default function App() {
           ? `Missed "${currentQuestion.question}" in ${currentQuestion.category}. Picked "${selectedChoice}" when the correct answer was "${correctChoice}". ${currentQuestion.explanation}`
           : `Ran out of time on "${currentQuestion.question}" in ${currentQuestion.category}. The correct answer was "${correctChoice}". ${currentQuestion.explanation}`;
         
-        // Reset streak in game state
-        await updateGame(game.id, {
-          players: players.map(p => p.uid === user.id ? { ...p, streak: 0 } : p)
+        const updatedPlayers = players.map(p => {
+          if (p.uid === user.id) return { ...p, streak: 0 };
+          return p;
         });
+        
+        const patch: any = { players: updatedPlayers };
 
         // End turn in multiplayer
         if (!isSolo && game.playerIds.length > 1) {
           const nextPlayerId = game.playerIds.find(id => id !== user.id);
-          await updateGame(game.id, {
-            currentTurn: nextPlayerId,
-            lastUpdated: Date.now()
-          });
+          patch.current_turn = nextPlayerId;
         }
+
+        await updateGame(game.id, patch);
       }
-
-      // Mark question as used (already done in game_ids / question mapping logic usually, but let's be explicit if needed)
-      // Actually, my gameService can handle this if we add a 'used' field to the junction or similar.
-      // For now, let's just assume the flow is correct.
     } catch (err) {
-      console.error('[gameLoop] Action failed:', err);
-      setError('Failed to process your answer.');
+      console.error(err);
     } finally {
-
       if (revealTimeoutRef.current) {
         window.clearTimeout(revealTimeoutRef.current);
       }
@@ -2024,16 +1717,12 @@ export default function App() {
 
         setShouldBlurQuestionBackground(true);
         setRoast({
-          id: Math.random().toString(),
-          text: '',
-          targetId: user.id,
           explanation: currentQuestion.explanation,
           isCorrect,
-          questionId: currentQuestion.questionId || currentQuestion.id,
+          questionId: currentQuestion.id,
           userId: user.id,
           gameId: game.id,
         });
-
         setResultPhase('explaining');
       }, 650);
     }
@@ -2151,7 +1840,19 @@ export default function App() {
     setIsStartingGame(true);
     setLoadingStep('creating_match');
     try {
-      // Reset players in the existing game
+      // Generate new questions
+      setIsFetchingQuestions(true);
+      setLoadingStep('loading_questions');
+      const initialQuestions = await getQuestionsForSession({
+        categories: playableCategories,
+        count: 3,
+        excludeQuestionIds: existingQuestionIds, // maybe clear this for new game?
+        userId: user.id,
+      });
+      await persistQuestionsToGameService(game.id, initialQuestions.map(q => q.id));
+      const nextQuestionIds = initialQuestions.map((question) => question.id);
+      kickOffInventoryReplenishment(playableCategories);
+      
       const resetPlayers = players.map(p => ({
         ...p,
         score: 0,
@@ -2159,35 +1860,21 @@ export default function App() {
         completedCategories: []
       }));
 
-      // Generate new questions
-      setIsFetchingQuestions(true);
-      setLoadingStep('loading_questions');
-      const initialQuestions = await getQuestionsForSession({
-        categories: playableCategories,
-        count: 3,
-        excludeQuestionIds: questions.map(q => q.id),
-        userId: user.id,
-      });
-      const nextQuestionIds = initialQuestions.map((q) => q.questionId || q.id);
-      await persistQuestionsToGame(game.id, nextQuestionIds);
-      setIsFetchingQuestions(false);
-      setLoadingStep('finalizing_match');
-
       // Reset game state
       const firstTurnPlayerId = players.find((player) => player.uid !== game.hostId)?.uid || game.hostId;
       await updateGame(game.id, {
         status: 'active',
-        players: resetPlayers,
-        currentTurn: firstTurnPlayerId,
-        winnerId: null,
-        currentQuestionId: null,
-        currentQuestionCategory: null,
-        currentQuestionIndex: -1,
-        currentQuestionStartedAt: null,
-        questionIds: nextQuestionIds,
+        current_turn: firstTurnPlayerId,
+        winner_id: null,
+        current_question_id: null,
+        current_question_category: null,
+        current_question_index: -1,
+        current_question_started_at: null,
+        question_ids: nextQuestionIds,
         answers: {},
-        lastUpdated: Date.now()
+        players: resetPlayers
       });
+
       setLastAnswerCorrect(false);
       setManualPickReady(false);
       setShowManualPickPrompt(false);
@@ -2207,7 +1894,7 @@ export default function App() {
       hasWarnedBehindRef.current = false;
       hasTriggeredMatchLossRef.current = false;
     } catch (err) {
-      console.error('[playAgain] Failed to restart game:', err);
+      console.error(err);
       setError("Failed to restart game.");
     } finally {
       setIsStartingGame(false);
@@ -2216,21 +1903,20 @@ export default function App() {
     }
   };
 
-
-  const sendMessageHandler = async () => {
+  const handleSendMessage = async () => {
     if (!game || !user || !chatInput.trim() || isSendingMessage) return;
     setIsSendingMessage(true);
+
     try {
       await sendMessage(game.id, user.id, chatInput.trim());
       setChatInput('');
     } catch (err) {
-      console.error('[sendMessage] Failed:', err);
+      console.error(err);
       setError("Failed to send message.");
     } finally {
       setIsSendingMessage(false);
     }
   };
-
 
   const openMobileChat = () => {
     if (!shouldShowMatchChat) return;
@@ -2276,13 +1962,13 @@ export default function App() {
           type="text"
           value={chatInput}
           onChange={(e) => setChatInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') sendMessageHandler(); }}
+          onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
           placeholder="Type a message..."
           disabled={isSendingMessage}
           className="flex-1 theme-input border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all duration-300 disabled:opacity-50 theme-inset"
         />
         <button type="button"
-          onClick={sendMessageHandler}
+          onClick={() => handleSendMessage()}
           disabled={isSendingMessage || !chatInput.trim()}
           className="p-3 bg-purple-600 rounded-xl hover:bg-purple-500 transition-all duration-300 disabled:opacity-50 flex items-center justify-center shadow-[0_4px_14px_0_rgba(147,51,234,0.39)] hover:shadow-[0_6px_20px_rgba(147,51,234,0.23)] active:scale-[0.96]"
         >
@@ -2443,6 +2129,16 @@ export default function App() {
               >
                 <SlidersHorizontal className="w-5 h-5" />
               </button>
+              {import.meta.env.DEV && (
+                <button type="button"
+                  onClick={() => setShowQuestionBankAdmin(true)}
+                  className="px-3 py-2 rounded-xl theme-button text-xs font-black uppercase tracking-widest"
+                  title="Question Bank Admin"
+                  aria-label="Open question bank admin"
+                >
+                  Dev
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-2 sm:gap-4">
               {game && (
@@ -2565,8 +2261,7 @@ export default function App() {
                         <div key={g.id} className="theme-soft-surface border rounded-2xl p-4 flex items-center justify-between">
                           <div>
                             <p className="text-xs theme-text-muted font-medium mb-1">
-                              {g.lastUpdated ? new Date(g.lastUpdated).toLocaleDateString() : 'Unknown Date'}
-
+                              {g.lastUpdated ? new Date(g.lastUpdated.toMillis()).toLocaleDateString() : 'Unknown Date'}
                             </p>
                             <p className="text-sm font-bold">
                               {g.code === 'SOLO' ? 'Solo Game' : 'Multiplayer'}
@@ -2634,7 +2329,7 @@ export default function App() {
                   <GameLobby
                     onStartSolo={startSoloGame}
                     onStartMulti={startMultiplayerGame}
-                    onJoinMulti={handleJoinGame}
+                    onJoinMulti={joinGame}
                     isLoading={isLobbyBusy}
                     loadingTitle={lobbyLoadingCopy.title}
                     loadingFlow={lobbyLoadingCopy.flow}
@@ -2880,6 +2575,15 @@ export default function App() {
           onCancel={closeConfirm}
           onConfirm={confirmAction === 'quit' ? handleConfirmedQuit : handleConfirmedSignOut}
         />
+
+        {import.meta.env.DEV && (
+          <Suspense fallback={null}>
+            <QuestionBankAdmin
+              isOpen={showQuestionBankAdmin}
+              onClose={() => setShowQuestionBankAdmin(false)}
+            />
+          </Suspense>
+        )}
       </div>
     </>
   );

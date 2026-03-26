@@ -1,8 +1,8 @@
 import { Type } from "@google/genai";
-import type { TriviaQuestion } from "../types";
-import type { HeckleGenerationContext } from "../content/heckles";
-import { MAX_HECKLES } from "../content/heckles";
-import { getGenerationCategoryProfile } from "./categorySubdomains";
+import type { TriviaQuestion } from "../types.js";
+import type { HeckleGenerationContext } from "../content/heckles.js";
+import { MAX_HECKLES } from "../content/heckles.js";
+import { getGenerationCategoryProfile } from "./categorySubdomains.js";
 
 export const TRIVIA_PIPELINE_VERSION = 'v3-factual-verify-style';
 
@@ -15,6 +15,7 @@ export const questionSchema = {
         type: Type.OBJECT,
         properties: {
           category: { type: Type.STRING },
+          subcategory: { type: Type.STRING },
           difficulty: { type: Type.STRING },
           question: { type: Type.STRING },
           choices: {
@@ -22,13 +23,18 @@ export const questionSchema = {
             items: { type: Type.STRING }
           },
           correctIndex: { type: Type.INTEGER },
-          explanation: { type: Type.STRING }
+          explanation: { type: Type.STRING },
+          tags: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          }
         },
         required: ["category", "difficulty", "question", "choices", "correctIndex", "explanation"]
       }
     }
   }
 };
+
 
 export const heckleSchema = {
   type: Type.OBJECT,
@@ -279,14 +285,17 @@ Return this exact top-level shape:
   "questions": [
     {
       "category": string,
+      "subcategory": string,
       "difficulty": "easy" | "medium" | "hard",
       "question": string,
       "choices": [string, string, string, string],
       "correctIndex": number,
-      "explanation": string
+      "explanation": string,
+      "tags": string[]
     }
   ]
 }
+
 
 Your job is to produce clean, accurate, and unambiguous trivia content.
 
@@ -410,29 +419,24 @@ export function dedupeQuestions(
     seen.push(candidate);
 
     accepted.push({
-      ...question,
       id: '',
-      questionId: '',
+      category: question.category,
+      subcategory: question.subcategory || '',
       difficulty: question.difficulty || 'medium',
+      question: question.question,
+      choices: question.choices,
       correctIndex: question.correctIndex,
       explanation: question.explanation || '',
-      validationStatus: 'pending',
-      verificationVerdict: 'reject',
-      verificationConfidence: 'low',
-      verificationIssues: [],
-      verificationReason: 'Awaiting verification.',
-      pipelineVersion: TRIVIA_PIPELINE_VERSION,
+      tags: question.tags || [],
+      status: 'pending',
+      presentation: {},
+      sourceType: 'ai',
       createdAt: Date.now(),
-      usedCount: 0,
-      correctQuip: '',
-      wrongAnswerQuips: {
-        0: '',
-        1: '',
-        2: '',
-        3: '',
-      },
-      used: false,
+      metadata: {
+        pipelineVersion: TRIVIA_PIPELINE_VERSION
+      }
     });
+
   }
 
   return accepted;
