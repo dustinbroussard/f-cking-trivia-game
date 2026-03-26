@@ -1,46 +1,23 @@
 {
-  "questions": [
-    {
-      "category": "Science",
-      "difficulty": "easy",
-      "question": "Replace this with your question text.",
-      "choices": [
-        "Choice A",
-        "Choice B",
-        "Choice C",
-        "Choice D"
-      ],
-      "correctIndex": 0,
-      "explanation": "Explain why the correct answer is right in one or two clear sentences."
-    },
-    {
-      "category": "History",
-      "difficulty": "medium",
-      "question": "Replace this with another question.",
-      "choices": [
-        "First option",
-        "Second option",
-        "Third option",
-        "Fourth option"
-      ],
-      "correctIndex": 1,
-      "explanation": "Add a factual explanation here."
-    },
-    {
-      "category": "Pop Culture",
-      "difficulty": "hard",
-      "question": "Optional styled fields can be included if you already have them.",
-      "choices": [
-        "Correct answer",
-        "Distractor one",
-        "Distractor two",
-        "Distractor three"
-      ],
-      "correctIndex": 0,
-      "explanation": "This is the plain explanation used by the importer.",
-      "questionStyled": "Optional: a styled version of the question.",
-      "explanationStyled": "Optional: a styled version of the explanation.",
-      "hostLeadIn": "Optional: short host intro."
-    }
-  ]
+  "id": "uuid",
+  "category": "Science",
+  "subcategory": "Astronomy",
+  "difficulty": "easy",
+  "question": "Which planet is known as the Red Planet?",
+  "choices": [
+    "Venus",
+    "Mars",
+    "Jupiter",
+    "Mercury"
+  ],
+  "correctIndex": 1,
+  "explanation": "Mars is called the Red Planet because iron oxide on its surface gives it a reddish color.",
+  "tags": ["planets", "solar system"],
+  "status": "approved",
+  "presentation": {
+    "questionStyled": "Which planet is known as the <b>Red Planet</b>?",
+    "explanationStyled": "Mars appears red because of iron oxide, or rust, on its surface.",
+    "hostLeadIn": "Here’s an easy one."
+  },
+  "sourceType": "ai"
 }
