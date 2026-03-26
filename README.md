@@ -1,6 +1,6 @@
 # A F-cking Trivia Game
 
-A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built with React, Vite, Firebase, and Gemini/OpenRouter. It mixes a game-show wheel, AI-generated question batches, live Firestore sync, lobby chat, audio cues, and sarcastic roast copy into something that feels closer to a chaotic couch competition than a polite quiz app.
+A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built with React, Vite, Supabase, and Gemini/OpenRouter. It mixes a game-show wheel, AI-generated question batches, live sync, lobby chat, audio cues, and sarcastic roast copy into something that feels closer to a chaotic couch competition than a polite quiz app.
 
 ## What this thing does
 
@@ -15,7 +15,7 @@ A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built w
 ## Tech stack
 
 - **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, Motion
-- **State + realtime sync:** Firebase Auth + Cloud Firestore
+- **State + realtime sync:** Supabase Auth + database/realtime services
 - **Content generation:** Gemini (`@google/genai`) with an OpenRouter fallback
 - **PWA bits:** `manifest.webmanifest`, `sw.js`, custom install prompt
 - **Media:** local audio assets for theme, spin, win/loss, and answer feedback
@@ -43,11 +43,9 @@ A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built w
 ├── src/
 │   ├── components/            # lobby, wheel, cards, prompts, overlays
 │   ├── services/gemini.ts     # question + roast generation
-│   ├── firebase.ts            # Firebase bootstrapping/auth helpers
 │   ├── types.ts               # shared game data contracts
 │   ├── App.tsx                # main gameplay + realtime orchestration
 │   └── main.tsx               # React entry and service worker registration
-├── firebase-applet-config.json
 ├── metadata.json
 └── README.md
 ```
@@ -58,9 +56,7 @@ A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built w
 
 - Node.js 20+ recommended
 - npm
-- A Firebase project configured for:
-  - Google Authentication
-  - Cloud Firestore
+- A Supabase project configured for auth/database access
 - A Gemini API key
 - Optional: an OpenRouter API key for fallback generation
 
@@ -81,9 +77,9 @@ OPENROUTER_API_KEY=your_openrouter_api_key_optional
 
 > `OPENROUTER_API_KEY` is optional, but the app will use it as a fallback if Gemini generation fails.
 
-### Firebase configuration
+### Supabase configuration
 
-This repo expects Firebase client config in `firebase-applet-config.json`. Make sure the file points at the correct project and Firestore database before running locally.
+This repo expects Supabase environment variables for the active app. Make sure your local env points at the correct project before running locally.
 
 ### Start the app
 
@@ -95,19 +91,11 @@ Vite serves the app on port `3000` by default.
 
 ### Dedicated generator app
 
-This repo now supports a separate generator-only frontend at `/generator`.
+This repo still exposes a separate generator-only frontend at `/generator`, but the old Firebase-backed version has been retired during the Supabase migration.
 
-- It signs in with the same Firebase Google Auth setup as the main game.
-- It exposes a single button that triggers `/api/maintenance/top-up`.
-- The API accepts either:
-  - `Authorization: Bearer <firebase-id-token>` from a signed-in user whose email is listed in `MAINTENANCE_ALLOWED_EMAILS`
-  - `x-maintenance-token: <MAINTENANCE_TOKEN>` for server-to-server or cron use
-
-Add this to your env when using the generator app:
-
-```bash
-MAINTENANCE_ALLOWED_EMAILS="your-google-email@example.com"
-```
+- The current page is a retirement notice, not an operational tool.
+- `/api/maintenance/top-up` now returns a retired response instead of using Firebase Auth or Firestore.
+- Re-enable this flow only after replacing it with a Supabase-native admin path.
 
 Then open:
 
@@ -131,14 +119,14 @@ npm run build
 
 ## How realtime multiplayer works
 
-The app stores each active match in Firestore and listens to several collections/documents in real time:
+The app stores each active match in Supabase and listens to the backing data in real time:
 
 - `games/{gameId}` for top-level game status, join code, winner, and whose turn it is.
 - `games/{gameId}/players/{uid}` for score, streak, avatar, and completed categories.
 - `games/{gameId}/questions/{questionId}` for generated question pools and `used` flags.
 - `games/{gameId}/messages/{messageId}` for lobby chat.
 
-That means both players stay synced without a custom game server, which is great for speed but also means Firestore rules and data modeling matter a lot.
+That means both players stay synced without a custom game server, which is great for speed but also means your Supabase schema and policies matter a lot.
 
 ## AI generation notes
 

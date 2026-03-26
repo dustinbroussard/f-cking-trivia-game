@@ -21,3 +21,10 @@ export function onAuthStateChange(callback: (user: any) => void) {
   });
   return subscription;
 }
+
+// NEW: Password migration helper (optional)
+export async function migratePassword(email: string, oldPassword: string, newPassword: string) {
+  // This would require a custom endpoint or backend function
+  // For now, implement forced reset strategy
+  console.log('Password migration requires user reset');
+}

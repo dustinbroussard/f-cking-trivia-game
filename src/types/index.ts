@@ -38,10 +38,12 @@ export interface TriviaQuestion {
 export interface Player {
   uid: string;
   name: string;
+  displayName?: string;
   score: number;
   streak: number;
   completedCategories: string[];
   avatarUrl?: string;
+  photoURL?: string;
   lastActive?: number;
   lastResumedAt?: number;
 }
@@ -65,7 +67,7 @@ export interface GameState {
   finalScores: Record<string, number>;
   categoriesUsed: string[];
   statsRecordedAt?: number;
-  lastUpdated: string;
+  lastUpdated: number;
   createdAt?: string;
 }
 
@@ -190,6 +192,22 @@ export function getPlayableCategories(): string[] {
     'Animals'
   ];
 }
+
+export const CATEGORIES = [...getPlayableCategories(), 'Random'] as const;
+
+export const CATEGORY_COLORS: Record<string, string> = {
+  Science: '#22d3ee',
+  History: '#f97316',
+  Geography: '#84cc16',
+  Literature: '#facc15',
+  'Pop Culture': '#f472b6',
+  Sports: '#34d399',
+  Music: '#a78bfa',
+  Art: '#fb7185',
+  Technology: '#60a5fa',
+  Animals: '#f59e0b',
+  Random: '#f8fafc',
+};
 
 export function isPlayableCategory(category: string): boolean {
   return getPlayableCategories().includes(category);

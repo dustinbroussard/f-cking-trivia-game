@@ -1,5 +1,5 @@
 import { Type } from '@google/genai';
-import type { TriviaQuestion } from '../types.js';
+import type { TriviaQuestion } from '../types';
 
 export type VerificationVerdict = 'pass' | 'reject';
 export type VerificationConfidence = 'high' | 'medium' | 'low';

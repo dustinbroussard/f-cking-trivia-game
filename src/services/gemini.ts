@@ -1,8 +1,8 @@
 import { Type } from "@google/genai";
-import type { TriviaQuestion } from "../types.js";
-import type { HeckleGenerationContext } from "../content/heckles.js";
-import { MAX_HECKLES } from "../content/heckles.js";
-import { getGenerationCategoryProfile } from "./categorySubdomains.js";
+import type { TriviaQuestion } from "../types";
+import type { HeckleGenerationContext } from "../content/heckles";
+import { MAX_HECKLES } from "../content/heckles";
+import { getGenerationCategoryProfile } from "./categorySubdomains";
 
 export const TRIVIA_PIPELINE_VERSION = 'v3-factual-verify-style';
 

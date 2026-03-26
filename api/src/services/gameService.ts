@@ -50,6 +50,7 @@ export function mapPostgresGameToState(g: any): GameState {
     categoriesUsed: g.categories_used || [],
     statsRecordedAt: g.stats_recorded_at ? new Date(g.stats_recorded_at).getTime() : undefined,
     lastUpdated: new Date(g.last_updated).getTime(),
+    createdAt: new Date(g.created_at).getTime(),
   };
 }
 
@@ -191,6 +192,16 @@ export async function clearActiveGameQuestion(gameId: string) {
       last_updated: new Date().toISOString(),
     })
     .eq('id', gameId);
+  if (error) throw error;
+}
+
+export async function recordAnswer(gameId: string, questionId: string, userId: string, answer: GameAnswer) {
+  const { error } = await supabase.rpc('record_game_answer', {
+    p_game_id: gameId,
+    p_question_id: questionId,
+    p_user_id: userId,
+    p_answer: answer
+  });
   if (error) throw error;
 }
 

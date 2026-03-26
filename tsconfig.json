@@ -29,11 +29,12 @@
   },
   "include": [
     "src",
-    "api",
+    "api/**/*.ts",
     "vite.config.ts"
   ],
   "exclude": [
     "dist",
-    "node_modules"
+    "node_modules",
+    "api/src"
   ]
 }

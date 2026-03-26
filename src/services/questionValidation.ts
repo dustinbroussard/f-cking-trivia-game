@@ -1,5 +1,5 @@
-import type { TriviaQuestion } from '../types.js';
-import { isPlayableCategory } from '../types.js';
+import type { TriviaQuestion } from '../types';
+import { isPlayableCategory } from '../types';
 
 const MIN_EXPLANATION_LENGTH = 20;
 const DISALLOWED_PHRASES = ['all of the above', 'none of the above'];

@@ -110,6 +110,7 @@ export interface GameState {
   status: 'waiting' | 'active' | 'completed' | 'abandoned';
   hostId: string;
   playerIds: string[];
+  players: Player[];
   currentTurn: string;
   winnerId: string | null;
   currentQuestionId?: string | null;

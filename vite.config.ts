@@ -9,9 +9,6 @@ function createContentSecurityPolicy(isDev: boolean) {
     "'self'",
     'https://*.googleapis.com',
     'https://*.googleusercontent.com',
-    'https://identitytoolkit.googleapis.com',
-    'https://securetoken.googleapis.com',
-    'https://firestore.googleapis.com',
     'https://www.googleapis.com',
     'https://openrouter.ai',
     'https://generativelanguage.googleapis.com',
@@ -30,7 +27,7 @@ function createContentSecurityPolicy(isDev: boolean) {
     "font-src 'self' data: https://fonts.gstatic.com",
     "media-src 'self' blob:",
     `connect-src ${connectSrc.join(' ')}`,
-    "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com https://apis.google.com",
+    "frame-src 'self' https://accounts.google.com https://apis.google.com",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
     "object-src 'none'",
@@ -85,7 +82,6 @@ export default defineConfig(({ command }) => {
           manualChunks(id) {
             if (!id.includes('node_modules')) return;
 
-            if (id.includes('firebase')) return 'firebase';
             if (id.includes('@google/genai')) return 'ai';
             if (id.includes('motion') || id.includes('lucide-react') || id.includes('canvas-confetti')) {
               return 'ui-vendor';

@@ -1,13 +1,13 @@
+import 'dotenv/config';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
-import { pathToFileURL } from 'node:url';
+import { createClient } from '@supabase/supabase-js';
 
 const ROOT = process.cwd();
-const QUESTION_COLLECTION = 'questions';
+const QUESTION_TABLE = 'questions';
 const DEFAULT_FILES = ['new-questions.json', 'starter-questions.json', 'starterquestions.json', 'strarterquestions.json'];
-const FIRESTORE_DATABASE_ID = 'ai-studio-5d62c22c-0318-44b3-a976-ecfe921b8e12';
-const FIREBASE_PROJECT_ID = 'ai-studio-applet-webapp-a549d';
+const INSERT_BATCH_SIZE = 100;
 
 async function resolveStarterFile(inputPath) {
   if (inputPath) return path.resolve(ROOT, inputPath);
@@ -25,77 +25,22 @@ async function resolveStarterFile(inputPath) {
   throw new Error(`Starter file not found. Expected one of: ${DEFAULT_FILES.join(', ')}`);
 }
 
-async function loadFirebaseAdmin() {
-  try {
-    const appModule = await import('firebase-admin/app');
-    const firestoreModule = await import('firebase-admin/firestore');
-    return { ...appModule, ...firestoreModule };
-  } catch (error) {
+function createSupabaseAdmin() {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !serviceRoleKey) {
     throw new Error(
-      `Firebase Admin authentication failed: ${error instanceof Error ? error.message : String(error)}\n\n` +
-      `TO FIX THIS LOCALLY:\n` +
-      `1. Install the Google Cloud SDK (gcloud)\n` +
-      `2. Run: gcloud auth application-default login\n\n` +
-      `OR:\n` +
-      `1. Generate a Service Account JSON key in the Firebase Console (Project Settings -> Service Accounts)\n` +
-      `2. Set the environment variable: export GOOGLE_APPLICATION_CREDENTIALS="path/to/your/service-account.json"`
+      'Missing Supabase admin credentials. Set SUPABASE_URL (or VITE_SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY before importing.'
     );
   }
-}
 
-async function getServiceAccount() {
-  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-    return JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-  }
-
-  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    return pathToFileURL(process.env.GOOGLE_APPLICATION_CREDENTIALS).href;
-  }
-
-  // Fallback: Look for service account files in the root
-  try {
-    const files = await fs.readdir(ROOT);
-    const saFile = files.find(f => f.includes('firebase-adminsdk') && f.endsWith('.json'));
-    if (saFile) {
-      const saPath = path.resolve(ROOT, saFile);
-      console.info(`[import-starter-questions] Using local service account: ${saFile}`);
-      return JSON.parse(await fs.readFile(saPath, 'utf8'));
-    }
-  } catch (err) {
-    // Ignore scan errors
-  }
-
-  return null;
-}
-
-async function createFirestore() {
-  const {
-    applicationDefault,
-    cert,
-    getApps,
-    initializeApp,
-    getFirestore,
-  } = await loadFirebaseAdmin();
-
-  if (!getApps().length) {
-    const credentials = await getServiceAccount();
-
-    const config = {
-      projectId: FIREBASE_PROJECT_ID,
-      databaseURL: `https://${FIREBASE_PROJECT_ID}.firebaseio.com`,
-    };
-
-    if (typeof credentials === 'string') {
-      const serviceAccountJson = JSON.parse(await fs.readFile(new URL(credentials), 'utf8'));
-      initializeApp({ ...config, credential: cert(serviceAccountJson) });
-    } else if (credentials) {
-      initializeApp({ ...config, credential: cert(credentials) });
-    } else {
-      initializeApp({ ...config, credential: applicationDefault() });
-    }
-  }
-
-  return getFirestore(undefined, FIRESTORE_DATABASE_ID);
+  return createClient(url, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
 }
 
 function parseStarterFile(rawText, filePath) {
@@ -103,7 +48,7 @@ function parseStarterFile(rawText, filePath) {
     return JSON.parse(rawText);
   } catch (error) {
     throw new Error(
-      `Starter file "${path.basename(filePath)}" is not valid JSON. If this is the current concatenated styling export, replace it with a single JSON object or array containing full questions. ${error instanceof Error ? error.message : String(error)}`
+      `Starter file "${path.basename(filePath)}" is not valid JSON. ${error instanceof Error ? error.message : String(error)}`
     );
   }
 }
@@ -137,27 +82,81 @@ function normalizeQuestion(rawQuestion, createdAt) {
     throw new Error(`Question "${rawQuestion.question}" has an invalid correctIndex.`);
   }
 
+  const correctAnswer = rawQuestion.choices[rawQuestion.correctIndex];
+  const distractors = rawQuestion.choices.filter((_, index) => index !== rawQuestion.correctIndex);
+  const presentation = {
+    ...(rawQuestion.hostLeadIn ? { hostLeadIn: rawQuestion.hostLeadIn } : {}),
+    ...(rawQuestion.questionStyled ? { questionStyled: rawQuestion.questionStyled } : {}),
+    ...(rawQuestion.explanationStyled ? { explanationStyled: rawQuestion.explanationStyled } : {}),
+  };
+  const status = rawQuestion.status || rawQuestion.validationStatus || 'approved';
+  const sourceType = rawQuestion.sourceType || 'manual_import';
+
   return {
     category: rawQuestion.category,
+    ...(rawQuestion.subcategory ? { subcategory: rawQuestion.subcategory } : {}),
     difficulty: rawQuestion.difficulty,
     question: rawQuestion.question,
     choices: rawQuestion.choices,
-    correctIndex: rawQuestion.correctIndex,
-    answerIndex: rawQuestion.correctIndex,
+    correct_index: rawQuestion.correctIndex,
     explanation: rawQuestion.explanation,
-    ...(rawQuestion.questionStyled ? { questionStyled: rawQuestion.questionStyled } : {}),
-    ...(rawQuestion.explanationStyled ? { explanationStyled: rawQuestion.explanationStyled } : {}),
-    ...(rawQuestion.hostLeadIn ? { hostLeadIn: rawQuestion.hostLeadIn } : {}),
-    validationStatus: 'approved',
-    verificationVerdict: 'pass',
-    verificationConfidence: 'high',
-    pipelineVersion: 2,
-    createdAt,
-    usedCount: 0,
-    used: false,
-    correctQuip: rawQuestion.correctQuip || '',
-    wrongAnswerQuips: rawQuestion.wrongAnswerQuips || { 0: '', 1: '', 2: '', 3: '' },
+    tags: Array.isArray(rawQuestion.tags) ? rawQuestion.tags : [],
+    status,
+    source_type: sourceType,
+    presentation,
+    created_at: createdAt,
+    updated_at: createdAt,
+    content: rawQuestion.question,
+    validation_status: rawQuestion.validationStatus || status,
+    difficulty_level: rawQuestion.difficulty,
+    styling: presentation,
+    correct_answer: correctAnswer,
+    distractors,
+    used_count: 0,
   };
+}
+
+async function loadExistingQuestionContents(supabase) {
+  const existingContents = new Set();
+  let from = 0;
+
+  while (true) {
+    const to = from + 999;
+    const { data, error } = await supabase
+      .from(QUESTION_TABLE)
+      .select('content')
+      .range(from, to);
+
+    if (error) {
+      throw new Error(`[import-starter-questions] Failed to load existing questions: ${error.message}`);
+    }
+
+    const rows = data || [];
+    for (const row of rows) {
+      if (typeof row.content === 'string') {
+        existingContents.add(row.content.trim().toLowerCase());
+      }
+    }
+
+    if (rows.length < 1000) {
+      break;
+    }
+
+    from += 1000;
+  }
+
+  return existingContents;
+}
+
+async function insertInBatches(supabase, rows) {
+  for (let index = 0; index < rows.length; index += INSERT_BATCH_SIZE) {
+    const batch = rows.slice(index, index + INSERT_BATCH_SIZE);
+    const { error } = await supabase.from(QUESTION_TABLE).insert(batch);
+
+    if (error) {
+      throw new Error(`[import-starter-questions] Supabase insert failed: ${error.message}`);
+    }
+  }
 }
 
 async function main() {
@@ -165,38 +164,32 @@ async function main() {
   const rawText = await fs.readFile(filePath, 'utf8');
   const parsed = parseStarterFile(rawText, filePath);
   const rawQuestions = getRawQuestions(parsed);
-  const createdAt = Date.now();
+  const createdAt = new Date().toISOString();
   const normalizedQuestions = rawQuestions.map((question) => normalizeQuestion(question, createdAt));
-  const db = await createFirestore();
+  const supabase = createSupabaseAdmin();
+  const existingQuestions = await loadExistingQuestionContents(supabase);
 
-  const existingSnapshot = await db.collection(QUESTION_COLLECTION).select('question').get();
-  const existingQuestions = new Set(
-    existingSnapshot.docs
-      .map((doc) => doc.get('question'))
-      .filter((value) => typeof value === 'string')
-      .map((value) => value.trim().toLowerCase())
-  );
-
-  let inserted = 0;
+  const toInsert = [];
   let skipped = 0;
 
   for (const question of normalizedQuestions) {
-    const dedupeKey = question.question.trim().toLowerCase();
+    const dedupeKey = question.content.trim().toLowerCase();
     if (existingQuestions.has(dedupeKey)) {
       skipped += 1;
       continue;
     }
 
-    await db.collection(QUESTION_COLLECTION).add(question);
     existingQuestions.add(dedupeKey);
-    inserted += 1;
+    toInsert.push(question);
   }
 
+  await insertInBatches(supabase, toInsert);
+
   console.log(JSON.stringify({
-    collection: QUESTION_COLLECTION,
+    table: QUESTION_TABLE,
     filePath,
     total: normalizedQuestions.length,
-    inserted,
+    inserted: toInsert.length,
     skipped,
   }, null, 2));
 }

@@ -20,17 +20,13 @@ import {
   clearActiveGameQuestion,
   subscribeToMessages,
   getGameQuestions,
+  sendMessage,
 } from './services/gameService';
 
 
 import { ChatMessage, GameAnswer, GameInvite, GameState, MatchupSummary, Player, PlayerProfile, RecentCompletedGame, RecentPlayer, RoastState, TriviaQuestion, UserSettings, getPlayableCategories } from './types';
 import { QUESTION_COLLECTION } from './services/questionCollections';
-import {
-  ACTIVE_GAME_REPLENISH_MIN_APPROVED,
-  AUTO_REPLENISH_BATCH_SIZE,
-  STARTUP_REPLENISH_MIN_APPROVED,
-} from './services/questionInventoryConfig';
-import { ensureQuestionInventory, getQuestionsForSession, markQuestionSeen } from './services/questionRepository';
+import { getQuestionsForSession, markQuestionSeen } from './services/questionRepository';
 import { acceptInvite, declineInvite, expireInvite, sendInvite, subscribeToIncomingInvites } from './services/invites';
 import { GameLobby } from './components/GameLobby';
 import { Wheel } from './components/Wheel';
@@ -48,7 +44,6 @@ import { publicAsset } from './assets';
 import { motion, AnimatePresence } from 'motion/react';
 import { LogOut, RefreshCcw, Trophy, ArrowLeft, Volume2, VolumeX, Send, Loader2, History, X, Sun, Moon, SlidersHorizontal } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { orderBy, limit } from 'firebase/firestore';
 import { omitUndefinedFields } from './services/firestoreData';
 import { DEFAULT_USER_SETTINGS, getLocalSettings, loadUserSettings, mergeSettings, saveLocalSettings, saveUserSettings } from './services/userSettings';
 import { generateHeckles } from './services/gemini';
@@ -80,7 +75,6 @@ type LoadingStep =
   | 'finalizing_round';
 
 const SettingsModal = lazy(() => import('./components/SettingsModal').then((module) => ({ default: module.SettingsModal })));
-const QuestionBankAdmin = lazy(() => import('./components/QuestionBankAdmin').then((module) => ({ default: module.QuestionBankAdmin })));
 
 const QUESTION_LOADING_LINES = [
   'Stealing questions from smarter people...',
@@ -200,7 +194,6 @@ export default function App() {
   const [isSolo, setIsSolo] = useState(false);
   const [settings, setSettings] = useState<UserSettings>(() => getLocalSettings());
   const [showSettings, setShowSettings] = useState(false);
-  const [showQuestionBankAdmin, setShowQuestionBankAdmin] = useState(false);
   const [remoteSettingsResolved, setRemoteSettingsResolved] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -474,29 +467,6 @@ export default function App() {
   const resolveWheelCategory = (category: string) => {
     if (category !== 'Random') return category;
     return playableCategories[Math.floor(Math.random() * playableCategories.length)];
-  };
-
-  const kickOffInventoryReplenishment = (categories: string[]) => {
-    let staggerDelay = 0;
-    categories.forEach((category) => {
-      (['easy', 'medium', 'hard'] as const).forEach((difficulty) => {
-        const currentDelay = staggerDelay;
-        staggerDelay += 400; // 400ms delay between each check
-
-        setTimeout(() => {
-          ensureQuestionInventory({
-            category,
-            difficulty,
-            minimumApproved: STARTUP_REPLENISH_MIN_APPROVED,
-            replenishBatchSize: AUTO_REPLENISH_BATCH_SIZE,
-          }).catch((err) => {
-            if (import.meta.env.DEV) {
-              console.warn(`[questionInventory] Failed for ${category}/${difficulty}:`, err);
-            }
-          });
-        }, currentDelay);
-      });
-    });
   };
 
   const setActiveGameQuestion = async (gameId: string, category: string, questionId: string, questionIndex: number, startedAt: number) => {
@@ -1176,10 +1146,10 @@ export default function App() {
     const unsub = subscribeRecentCompletedGames(
       user.id,
       (games) => {
-        setPastGames(games);
+        setRecentCompletedGames(games);
       },
       (err) => {
-        setPastGames([]);
+        setRecentCompletedGames([]);
         console.error(`[gameHistory] Error fetching history for user ${user.id}:`, err);
         setError('Failed to load match history.');
       },
@@ -1522,7 +1492,7 @@ export default function App() {
       answers: {},
       finalScores: {},
       categoriesUsed: [],
-      lastUpdated: new Date().toISOString()
+      lastUpdated: Date.now()
     };
 
 
@@ -1549,7 +1519,6 @@ export default function App() {
       });
       await persistQuestionsToGame(gameId, initialQuestions.map((question) => question.questionId || question.id));
 
-      kickOffInventoryReplenishment(playableCategories);
       setIsFetchingQuestions(false);
       setLoadingStep('finalizing_lobby');
 
@@ -1593,7 +1562,7 @@ export default function App() {
       answers: {},
       finalScores: {},
       categoriesUsed: [],
-      lastUpdated: new Date().toISOString()
+      lastUpdated: Date.now()
     };
 
 
@@ -1619,7 +1588,6 @@ export default function App() {
       });
       const nextQuestionIds = initialQuestions.map((q) => q.questionId || q.id);
       await persistQuestionsToGame(gameId, nextQuestionIds);
-      kickOffInventoryReplenishment(playableCategories);
       setIsFetchingQuestions(false);
       setLoadingStep('finalizing_lobby');
       setGame(newGame);
@@ -1691,7 +1659,7 @@ export default function App() {
       answers: {},
       finalScores: {},
       categoriesUsed: [],
-      lastUpdated: new Date().toISOString()
+      lastUpdated: Date.now()
     };
 
 
@@ -1718,7 +1686,6 @@ export default function App() {
       });
       await persistQuestionsToGame(gameId, initialQuestions.map(q => q.id));
 
-      kickOffInventoryReplenishment(playableCategories);
       setIsFetchingQuestions(false);
       setLoadingStep('finalizing_lobby');
 
@@ -1834,16 +1801,6 @@ export default function App() {
       const questionId = q.questionId || q.id;
       const questionIndex = game.questionIds?.indexOf(questionId) ?? -1;
       showCategoryReveal(resolvedCategory, q, questionIndex >= 0 ? questionIndex : 0);
-      ensureQuestionInventory({
-        category: resolvedCategory,
-        difficulty: q.difficulty as any || 'medium',
-        minimumApproved: ACTIVE_GAME_REPLENISH_MIN_APPROVED,
-        replenishBatchSize: AUTO_REPLENISH_BATCH_SIZE,
-      }).catch((err) => {
-        if (import.meta.env.DEV) {
-          console.warn(`[questionInventory] Failed for ${resolvedCategory}/${q.difficulty || 'medium'}:`, err);
-        }
-      });
     } else {
       // Fetch more questions if needed
       setIsFetchingQuestions(true);
@@ -1873,16 +1830,6 @@ export default function App() {
               console.error(`[persistQuestionsToGame] Failed for game ${game!.id}:`, err);
               setError('Failed to persist questions.');
             });
-          ensureQuestionInventory({
-            category: resolvedCategory,
-            difficulty: q.difficulty as any || 'medium',
-            minimumApproved: ACTIVE_GAME_REPLENISH_MIN_APPROVED,
-            replenishBatchSize: AUTO_REPLENISH_BATCH_SIZE,
-          }).catch((err) => {
-            if (import.meta.env.DEV) {
-              console.warn(`[questionInventory] Failed for ${resolvedCategory}/${q.difficulty || 'medium'}:`, err);
-            }
-          });
         } else {
           setError("Failed to load questions. Please try again.");
         }
@@ -1966,7 +1913,7 @@ export default function App() {
       
       // Incrementally update player stats even if match isn't finished
       void recordQuestionStats({
-        userId: user.id,
+        uid: user.id,
         category: currentQuestion.category,
         isCorrect
       }).catch(err => {
@@ -2053,7 +2000,7 @@ export default function App() {
           const nextPlayerId = game.playerIds.find(id => id !== user.id);
           await updateGame(game.id, {
             currentTurn: nextPlayerId,
-            lastUpdated: new Date().toISOString()
+            lastUpdated: Date.now()
           });
         }
       }
@@ -2148,6 +2095,7 @@ export default function App() {
     mobileChatBadgeClasses[(messages.length + (game?.id?.length || 0)) % mobileChatBadgeClasses.length];
   const setupLoadingCopy = getLoadingCopy(loadingStep);
   const questionLoadingCopy = getLoadingCopy(loadingStep === 'idle' ? 'loading_questions' : loadingStep);
+  const isLobbyBusy = isStartingGame || isJoiningGame || isCheckingForResume;
 
   useEffect(() => {
     if (!isMobileChatOpen) return;
@@ -2219,7 +2167,6 @@ export default function App() {
       });
       const nextQuestionIds = initialQuestions.map((q) => q.questionId || q.id);
       await persistQuestionsToGame(game.id, nextQuestionIds);
-      kickOffInventoryReplenishment(playableCategories);
       setIsFetchingQuestions(false);
       setLoadingStep('finalizing_match');
 
@@ -2236,7 +2183,7 @@ export default function App() {
         currentQuestionStartedAt: null,
         questionIds: nextQuestionIds,
         answers: {},
-        lastUpdated: new Date().toISOString()
+        lastUpdated: Date.now()
       });
       setLastAnswerCorrect(false);
       setManualPickReady(false);
@@ -2493,16 +2440,6 @@ export default function App() {
               >
                 <SlidersHorizontal className="w-5 h-5" />
               </button>
-              {import.meta.env.DEV && (
-                <button type="button"
-                  onClick={() => setShowQuestionBankAdmin(true)}
-                  className="px-3 py-2 rounded-xl theme-button text-xs font-black uppercase tracking-widest"
-                  title="Question Bank Admin"
-                  aria-label="Open question bank admin"
-                >
-                  Dev
-                </button>
-              )}
             </div>
             <div className="flex items-center gap-2 sm:gap-4">
               {game && (
@@ -2685,7 +2622,7 @@ export default function App() {
                   </div>
                 )}
                 {(isStartingGame || isJoiningGame) && (
-                  <div className="absolute inset-0 z-10 theme-overlay backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center">
+                  <div className="absolute inset-0 z-40 theme-overlay backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center">
                     <Loader2 className="w-8 h-8 text-pink-500 animate-spin mb-4" />
                     <p className="text-base font-bold theme-text-secondary">
                       {setupLoadingCopy.title}
@@ -2696,12 +2633,20 @@ export default function App() {
                   </div>
                 )}
                 {isCheckingForResume && (
-                  <div className="absolute inset-0 z-10 theme-overlay backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center">
+                  <div className="absolute inset-0 z-40 theme-overlay backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center">
                     <Loader2 className="w-8 h-8 text-cyan-400 animate-spin mb-4" />
                     <p className="text-base font-bold theme-text-secondary">Checking for an active game</p>
                   </div>
                 )}
-                <div className={`h-full min-h-0 ${resumePrompt ? 'pointer-events-none opacity-40 transition-opacity duration-200' : ''}`}>
+                <div
+                  className={`h-full min-h-0 transition-all duration-300 ${
+                    resumePrompt
+                      ? 'pointer-events-none opacity-40'
+                      : isLobbyBusy
+                        ? 'pointer-events-none blur-sm scale-[0.99] opacity-70'
+                        : ''
+                  }`}
+                >
                   <GameLobby
                     onStartSolo={startSoloGame}
                     onStartMulti={startMultiplayerGame}
@@ -2949,15 +2894,6 @@ export default function App() {
           onCancel={closeConfirm}
           onConfirm={confirmAction === 'quit' ? handleConfirmedQuit : handleConfirmedSignOut}
         />
-
-        {import.meta.env.DEV && (
-          <Suspense fallback={null}>
-            <QuestionBankAdmin
-              isOpen={showQuestionBankAdmin}
-              onClose={() => setShowQuestionBankAdmin(false)}
-            />
-          </Suspense>
-        )}
       </div>
     </>
   );

@@ -39,8 +39,7 @@ import { publicAsset } from './assets';
 import { motion, AnimatePresence } from 'motion/react';
 import { LogOut, RefreshCcw, Trophy, ArrowLeft, Volume2, VolumeX, Send, Loader2, History, X, Sun, Moon, SlidersHorizontal } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { orderBy, limit } from 'firebase/firestore';
-import { omitUndefinedFields } from './services/firestoreData';
+import confetti from 'canvas-confetti';
 import { DEFAULT_USER_SETTINGS, getLocalSettings, loadUserSettings, mergeSettings, saveLocalSettings, saveUserSettings } from './services/userSettings';
 import { generateHeckles } from './services/gemini';
 import { notifySafe, requestNotificationPermissionSafe } from './services/notify';
@@ -350,36 +349,21 @@ export default function App() {
   };
 
   const updatePlayerActivity = async (gameId: string, playerUid: string, isResume = false) => {
-    const activity = Date.now();
-    const playerRef = doc(db, 'games', gameId, 'players', playerUid);
-    await updateDoc(playerRef, omitUndefinedFields({
-      lastActive: activity,
-      lastResumedAt: isResume ? activity : undefined,
-    }));
+    try {
+      await updatePlayerActivityService(gameId, playerUid, isResume);
+    } catch (err) {
+      console.error(`[updatePlayerActivity] Failed for game ${gameId}:`, err);
+    }
   };
 
   const abandonGame = async (gameId: string) => {
-    const gameRef = doc(db, 'games', gameId);
-    const gameSnapshot = await getDoc(gameRef);
-    if (!gameSnapshot.exists()) {
+    try {
+      await abandonGameService(gameId);
       persistActiveGameId(null);
-      return;
+    } catch (err) {
+      console.error(`[abandonGame] Failed to abandon game ${gameId}:`, err);
+      setError('Failed to abandon game.');
     }
-
-    const gameData = gameSnapshot.data() as GameState;
-    if (gameData.status === 'completed' || gameData.status === 'abandoned') {
-      persistActiveGameId(null);
-      return;
-    }
-
-    await updateDoc(gameRef, {
-      status: 'abandoned',
-      currentQuestionId: null,
-      currentQuestionCategory: null,
-      currentQuestionStartedAt: null,
-      lastUpdated: serverTimestamp(),
-    });
-    persistActiveGameId(null);
   };
 
   const clearResumePrompt = () => {
@@ -401,56 +385,53 @@ export default function App() {
 
 
   const recordRecentPlayer = async (ownerUid: string, player: Player, gameId: string) => {
-    const recentPlayerRef = doc(db, 'users', ownerUid, 'recentPlayers', player.uid);
-    await setDoc(recentPlayerRef, {
-      uid: player.uid,
-      displayName: player.name,
-      photoURL: player.avatarUrl || '',
-      lastPlayedAt: Date.now(),
-      lastGameId: gameId,
-      hidden: false,
-      updatedAt: Date.now(),
-    }, { merge: true });
+    try {
+      await updatePlayer(ownerUid, player.uid, {
+        display_name: player.name,
+        photo_url: player.avatarUrl || '',
+        last_played_at: new Date().toISOString(),
+        last_game_id: gameId,
+        hidden: false,
+      });
+    } catch (err) {
+      console.error(`[recordRecentPlayer] Failed to record recent player ${player.uid}:`, err);
+    }
   };
 
-  const joinWaitingGameById = async (gameId: string, avatarUrl: string) => {
+  const joinWaitingGameById = async (gameId: string, _avatarUrl: string) => {
     if (!user) return false;
 
-    const gameRef = doc(db, 'games', gameId);
-    const gameSnapshot = await getDoc(gameRef);
-    if (!gameSnapshot.exists()) {
-      setError('Invite expired. That match no longer exists.');
+    try {
+      const gameData = await getGameById(gameId);
+      if (!gameData) {
+        setError('Invite expired. That match no longer exists.');
+        return false;
+      }
+
+      if (gameData.status !== 'waiting') {
+        setError('Invite expired. That match already started.');
+        return false;
+      }
+
+      if (gameData.playerIds.length >= 2 && !gameData.playerIds.includes(user.id)) {
+        setError('Invite expired. That match is already full.');
+        return false;
+      }
+
+      const isNewJoiner = !gameData.playerIds.includes(user.id);
+
+      if (isNewJoiner) {
+        await joinGame(gameId, user.id);
+      }
+
+      setLoadingStep('finalizing_lobby');
+      setIsSolo(false);
+      return true;
+    } catch (err) {
+      console.error(`[joinWaitingGameById] Failed to join game ${gameId}:`, err);
+      setError('Failed to join game.');
       return false;
     }
-
-    const gameData = gameSnapshot.data() as GameState;
-    if (gameData.status !== 'waiting') {
-      setError('Invite expired. That match already started.');
-      return false;
-    }
-
-    if (gameData.playerIds.length >= 2 && !gameData.playerIds.includes(user.uid)) {
-      setError('Invite expired. That match is already full.');
-      return false;
-    }
-
-    const isNewJoiner = !gameData.playerIds.includes(user.uid);
-
-    if (isNewJoiner) {
-      await joinGame(gameId, user.id);
-    }
-
-
-    setLoadingStep('finalizing_lobby');
-    setIsSolo(false);
-    setGame({
-      id: gameId,
-      ...gameData,
-      playerIds: isNewJoiner ? [...gameData.playerIds, user.uid] : gameData.playerIds,
-      status: isNewJoiner ? 'active' : gameData.status,
-      currentTurn: isNewJoiner ? user.uid : gameData.currentTurn,
-    } as GameState);
-    return true;
   };
 
   const resolveWheelCategory = (category: string) => {
@@ -2145,6 +2126,7 @@ export default function App() {
     mobileChatBadgeClasses[(messages.length + (game?.id?.length || 0)) % mobileChatBadgeClasses.length];
   const setupLoadingCopy = getLoadingCopy(loadingStep);
   const questionLoadingCopy = getLoadingCopy(loadingStep === 'idle' ? 'loading_questions' : loadingStep);
+  const isLobbyBusy = isStartingGame || isJoiningGame || isCheckingForResume;
 
   useEffect(() => {
     if (!isMobileChatOpen) return;
@@ -2688,7 +2670,7 @@ export default function App() {
                   </div>
                 )}
                 {(isStartingGame || isJoiningGame) && (
-                  <div className="absolute inset-0 z-10 theme-overlay backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center">
+                  <div className="absolute inset-0 z-40 theme-overlay backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center">
                     <Loader2 className="w-8 h-8 text-pink-500 animate-spin mb-4" />
                     <p className="text-base font-bold theme-text-secondary">
                       {setupLoadingCopy.title}
@@ -2699,12 +2681,20 @@ export default function App() {
                   </div>
                 )}
                 {isCheckingForResume && (
-                  <div className="absolute inset-0 z-10 theme-overlay backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center">
+                  <div className="absolute inset-0 z-40 theme-overlay backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center">
                     <Loader2 className="w-8 h-8 text-cyan-400 animate-spin mb-4" />
                     <p className="text-base font-bold theme-text-secondary">Checking for an active game</p>
                   </div>
                 )}
-                <div className={`h-full min-h-0 ${resumePrompt ? 'pointer-events-none opacity-40 transition-opacity duration-200' : ''}`}>
+                <div
+                  className={`h-full min-h-0 transition-all duration-300 ${
+                    resumePrompt
+                      ? 'pointer-events-none opacity-40'
+                      : isLobbyBusy
+                        ? 'pointer-events-none blur-sm scale-[0.99] opacity-70'
+                        : ''
+                  }`}
+                >
                   <GameLobby
                     onStartSolo={startSoloGame}
                     onStartMulti={startMultiplayerGame}

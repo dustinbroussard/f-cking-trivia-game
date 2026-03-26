@@ -1,7 +1,3 @@
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { db } from '../firebase';
-import { FLAGGED_QUESTIONS_COLLECTION } from './questionCollections';
-
 interface FlagQuestionParams {
   questionId: string;
   userId?: string | null;
@@ -9,10 +5,9 @@ interface FlagQuestionParams {
 }
 
 export async function flagQuestion({ questionId, userId, gameId }: FlagQuestionParams) {
-  await addDoc(collection(db, FLAGGED_QUESTIONS_COLLECTION), {
+  console.info('[questionFlag] Review queue is temporarily disabled during the Firebase -> Supabase migration.', {
     questionId,
-    ...(userId ? { userId } : {}),
-    ...(gameId ? { gameId } : {}),
-    flaggedAt: serverTimestamp(),
+    userId,
+    gameId,
   });
 }
