@@ -1295,7 +1295,7 @@ export default function App() {
         userId: user.id,
       });
       await persistQuestionsToGameService(gameId, initialQuestions.map(q => q.id));
-      kickOffInventoryReplenishment(playableCategories);
+      refillInventory(playableCategories);
       
       setGame(newGame);
     } catch (err) {
@@ -1331,7 +1331,7 @@ export default function App() {
         userId: user.id,
       });
       await persistQuestionsToGameService(gameId, initialQuestions.map(q => q.id));
-      kickOffInventoryReplenishment(playableCategories);
+      refillInventory(playableCategories);
       
       setGame(newGame);
     } catch (err) {
@@ -1395,7 +1395,7 @@ export default function App() {
         userId: user.id,
       });
       await persistQuestionsToGameService(gameId, initialQuestions.map(q => q.id));
-      kickOffInventoryReplenishment(playableCategories);
+      refillInventory(playableCategories);
       
       await sendInvite({
         uid: user.id,
@@ -1851,7 +1851,7 @@ export default function App() {
       });
       await persistQuestionsToGameService(game.id, initialQuestions.map(q => q.id));
       const nextQuestionIds = initialQuestions.map((question) => question.id);
-      kickOffInventoryReplenishment(playableCategories);
+      refillInventory(playableCategories);
       
       const resetPlayers = players.map(p => ({
         ...p,
