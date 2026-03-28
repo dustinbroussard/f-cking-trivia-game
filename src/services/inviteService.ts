@@ -1,6 +1,10 @@
 import { supabase } from '../lib/supabase';
 import { GameInvite } from '../types';
 
+function isMissingTableError(error: any) {
+  return error?.code === 'PGRST205' || error?.status === 404;
+}
+
 export function subscribeToIncomingInvites(
   userId: string,
   callback: (invites: GameInvite[]) => void,
@@ -34,7 +38,12 @@ async function loadInvites(userId: string): Promise<GameInvite[]> {
     .eq('status', 'pending')
     .order('created_at', { ascending: false });
 
-  if (error) throw error;
+  if (error) {
+    if (isMissingTableError(error)) {
+      return [];
+    }
+    throw error;
+  }
   
   return (data || []).map(d => ({
     id: d.id,

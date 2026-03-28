@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Trophy, Users, Gamepad2, User, Upload, Bell, SendHorizontal, Check, X, BarChart3, Trash2 } from 'lucide-react';
 import { publicAsset } from '../assets';
-import { GameInvite, MatchupSummary, PlayerProfile, RecentCompletedGame, RecentPlayer } from '../types';
+import { CategoryPerformance, GameInvite, MatchupSummary, PlayerProfile, PlayerStatsSummary, RecentCompletedGame, RecentPlayer } from '../types';
 
 interface GameLobbyProps {
   onStartSolo: (avatarUrl: string) => void;
@@ -27,6 +27,60 @@ interface GameLobbyProps {
 }
 
 type LobbyMode = 'IDLE' | 'JOIN' | 'STATS' | 'RECENT_PLAYERS' | 'LOADING';
+
+const EMPTY_STATS: PlayerStatsSummary = {
+  completedGames: 0,
+  wins: 0,
+  losses: 0,
+  winPercentage: 0,
+  totalQuestionsSeen: 0,
+  totalQuestionsCorrect: 0,
+  categoryPerformance: {},
+};
+
+function getProfileStats(profile: PlayerProfile | null): PlayerStatsSummary {
+  const rawStats = profile?.stats;
+
+  if (rawStats) {
+    return {
+      ...EMPTY_STATS,
+      ...rawStats,
+      categoryPerformance: rawStats.categoryPerformance || {},
+    };
+  }
+
+  const legacyProfile = (profile || {}) as PlayerProfile & {
+    completedGames?: number;
+    wins?: number;
+    losses?: number;
+    totalQuestionsSeen?: number;
+    totalQuestionsCorrect?: number;
+    categoryPerformance?: Record<string, CategoryPerformance>;
+  };
+  const completedGames = Number(legacyProfile.completedGames ?? 0);
+  const wins = Number(legacyProfile.wins ?? 0);
+  const losses = Number(legacyProfile.losses ?? 0);
+  const totalQuestionsSeen = Number(legacyProfile.totalQuestionsSeen ?? 0);
+  const totalQuestionsCorrect = Number(legacyProfile.totalQuestionsCorrect ?? 0);
+
+  return {
+    completedGames,
+    wins,
+    losses,
+    winPercentage: completedGames > 0 ? Math.round((wins / completedGames) * 100) : 0,
+    totalQuestionsSeen,
+    totalQuestionsCorrect,
+    categoryPerformance: legacyProfile.categoryPerformance || {},
+  };
+}
+
+function getDisplayName(value: { nickname?: string; displayName?: string; name?: string } | null | undefined) {
+  return value?.displayName || value?.nickname || value?.name || 'Player';
+}
+
+function getAvatarUrl(value: { avatarUrl?: string; photoURL?: string } | null | undefined) {
+  return value?.avatarUrl || value?.photoURL;
+}
 
 export const GameLobby: React.FC<GameLobbyProps> = ({
   onStartSolo,
@@ -54,6 +108,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
   const [selectedAvatar, setSelectedAvatar] = useState('');
   const [currentMode, setCurrentMode] = useState<LobbyMode>('IDLE');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const profileStats = getProfileStats(playerProfile);
 
   useEffect(() => {
     if (selectedMatchup && currentMode !== 'RECENT_PLAYERS') {
@@ -116,8 +171,8 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const overallAccuracy = playerProfile?.stats.totalQuestionsSeen
-    ? Math.round((playerProfile.stats.totalQuestionsCorrect / playerProfile.stats.totalQuestionsSeen) * 100)
+  const overallAccuracy = profileStats.totalQuestionsSeen
+    ? Math.round((profileStats.totalQuestionsCorrect / profileStats.totalQuestionsSeen) * 100)
     : 0;
   const isInteractionLocked = currentMode === 'LOADING';
   const isStatsOpen = currentMode === 'STATS';
@@ -431,7 +486,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                     <div className="grid grid-cols-2 gap-3">
                       <div className="theme-soft-surface border rounded-2xl p-4 flex flex-col justify-center">
                         <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Win Rate</p>
-                        <p className="text-3xl font-black">{playerProfile?.stats.winPercentage ?? 0}%</p>
+                        <p className="text-3xl font-black">{profileStats.winPercentage}%</p>
                       </div>
                       <div className="theme-soft-surface border rounded-2xl p-4 flex flex-col justify-center">
                         <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Accuracy</p>
@@ -442,15 +497,15 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                     <div className="grid grid-cols-3 gap-3">
                       <div className="theme-soft-surface border rounded-2xl p-4 text-center">
                         <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Wins</p>
-                        <p className="text-xl font-black text-emerald-400">{playerProfile?.stats.wins ?? 0}</p>
+                        <p className="text-xl font-black text-emerald-400">{profileStats.wins}</p>
                       </div>
                       <div className="theme-soft-surface border rounded-2xl p-4 text-center">
                         <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Losses</p>
-                        <p className="text-xl font-black text-rose-400">{playerProfile?.stats.losses ?? 0}</p>
+                        <p className="text-xl font-black text-rose-400">{profileStats.losses}</p>
                       </div>
                       <div className="theme-soft-surface border rounded-2xl p-4 text-center">
                         <p className="text-[10px] uppercase tracking-widest theme-text-muted mb-1">Matches</p>
-                        <p className="text-xl font-black">{playerProfile?.stats.completedGames ?? 0}</p>
+                        <p className="text-xl font-black">{profileStats.completedGames}</p>
                       </div>
                     </div>
 
@@ -463,14 +518,14 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                           <div key={game.gameId} className="theme-soft-surface border rounded-2xl p-4 flex items-center justify-between gap-4">
                             <div>
                               <p className="text-sm font-bold">
-                                {game.players.map((player) => player.displayName).join(' vs ')}
+                                {game.players.map((player) => getDisplayName(player)).join(' vs ')}
                               </p>
                               <p className="text-[10px] uppercase tracking-widest theme-text-muted">
                                 {new Date(game.completedAt).toLocaleDateString()} • {game.categoriesUsed.join(', ') || 'No categories'}
                               </p>
                             </div>
                             <p className="text-xs font-black uppercase tracking-widest theme-text-secondary">
-                              Winner: {game.players.find((player) => player.uid === game.winnerId)?.displayName || 'None'}
+                              Winner: {getDisplayName(game.players.find((player) => player.uid === game.winnerId))}
                             </p>
                           </div>
                         ))
@@ -479,11 +534,11 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
 
                     <div className="space-y-3">
                       <h5 className="text-xs font-black uppercase tracking-widest theme-text-muted">Category Performance</h5>
-                      {Object.entries(playerProfile?.stats.categoryPerformance || {}).length === 0 ? (
+                      {Object.entries(profileStats.categoryPerformance).length === 0 ? (
                         <p className="text-sm theme-text-muted">Category accuracy shows up after you finish completed games.</p>
                       ) : (
                         <div className="space-y-2">
-                          {Object.entries(playerProfile?.stats.categoryPerformance || {}).map(([category, stats]) => (
+                          {Object.entries(profileStats.categoryPerformance).map(([category, stats]) => (
                             <div key={category} className="theme-soft-surface border rounded-2xl p-4 flex items-center justify-between gap-3">
                               <div>
                                 <p className="text-sm font-bold">{category}</p>
@@ -530,14 +585,14 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                               <div className="flex items-center gap-3 min-w-0">
                                 <div className="w-11 h-11 theme-avatar-surface rounded-xl flex items-center justify-center overflow-hidden border shrink-0">
-                                  {player.photoURL ? (
-                                    <img src={player.photoURL} alt={player.displayName} className="w-full h-full object-cover" />
+                                  {getAvatarUrl(player) ? (
+                                    <img src={getAvatarUrl(player)} alt={getDisplayName(player)} className="w-full h-full object-cover" />
                                   ) : (
                                     <User className="w-5 h-5 theme-text-muted" />
                                   )}
                                 </div>
                                 <div className="min-w-0">
-                                  <p className="text-sm font-bold truncate">{player.displayName}</p>
+                                  <p className="text-sm font-bold truncate">{getDisplayName(player)}</p>
                                   <p className="text-[10px] uppercase tracking-widest theme-text-muted">
                                     Last played {new Date(player.lastPlayedAt).toLocaleDateString()}
                                   </p>
@@ -562,7 +617,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                   type="button"
                                   onClick={() => onRemoveRecentPlayer(player)}
                                   className="p-2 rounded-xl theme-button"
-                                  aria-label={`Remove ${player.displayName} from recent players`}
+                                  aria-label={`Remove ${getDisplayName(player)} from recent players`}
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </button>
@@ -601,7 +656,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                           <div key={game.gameId} className="theme-panel-strong border rounded-2xl p-3 flex items-center justify-between gap-3">
                                             <div>
                                               <p className="text-sm font-bold">
-                                                Winner: {game.players.find((entry) => entry.uid === game.winnerId)?.displayName || 'None'}
+                                                Winner: {getDisplayName(game.players.find((entry) => entry.uid === game.winnerId))}
                                               </p>
                                               <p className="text-[10px] uppercase tracking-widest theme-text-muted">
                                                 {new Date(game.completedAt).toLocaleDateString()}
@@ -610,7 +665,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                                             <p className="text-[10px] uppercase tracking-widest theme-text-secondary">
                                               {Object.entries(game.finalScores).map(([uid, score]) => {
                                                 const entry = game.players.find((playerEntry) => playerEntry.uid === uid);
-                                                return `${entry?.displayName || 'Player'} ${score}`;
+                                                return `${getDisplayName(entry)} ${score}`;
                                               }).join(' • ')}
                                             </p>
                                           </div>

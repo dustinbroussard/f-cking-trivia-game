@@ -15,6 +15,10 @@ function isMissingRowError(error: any) {
   return error?.code === 'PGRST116' || error?.status === 406;
 }
 
+function isMissingTableError(error: any) {
+  return error?.code === 'PGRST205' || error?.status === 404;
+}
+
 function mapPostgresProfileToPlayerProfile(p: any): PlayerProfile {
   if (!p) return null as any;
   return {
@@ -143,7 +147,12 @@ async function loadRecentPlayers(uid: string): Promise<RecentPlayer[]> {
     .order('last_played_at', { ascending: false })
     .limit(12);
 
-  if (error) throw error;
+  if (error) {
+    if (isMissingTableError(error)) {
+      return [];
+    }
+    throw error;
+  }
   return (data || []).map(d => ({
     uid: d.opponent_id,
     nickname: d.nickname,
@@ -255,7 +264,12 @@ export async function removeRecentPlayer(uid: string, opponentUid: string) {
     .update({ hidden: true, updated_at: new Date().toISOString() })
     .eq('user_id', uid)
     .eq('opponent_id', opponentUid);
-  if (error) throw error;
+  if (error) {
+    if (isMissingTableError(error)) {
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function updateRecentPlayer(uid: string, opponentUid: string, patch: any) {
@@ -267,7 +281,12 @@ export async function updateRecentPlayer(uid: string, opponentUid: string, patch
       ...patch,
       updated_at: new Date().toISOString()
     });
-  if (error) throw error;
+  if (error) {
+    if (isMissingTableError(error)) {
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function recordQuestionStats({

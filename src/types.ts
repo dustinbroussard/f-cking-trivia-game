@@ -79,6 +79,7 @@ export interface PlayerProfile {
   userId: string;
   nickname: string;
   avatarUrl?: string;
+  stats?: PlayerStatsSummary;
   createdAt: any;
   updatedAt: any;
 }
