@@ -10,8 +10,8 @@ export async function sendInvite(
     .from('game_invites')
     .insert({
       from_uid: fromUser.uid,
-      from_display_name: fromUser.displayName,
-      from_photo_url: fromUser.photoURL,
+      nickname: fromUser.displayName,
+      avatar_url: fromUser.photoURL,
       to_uid: toUser.uid,
       game_id: gameId,
       status: 'pending',
@@ -85,8 +85,8 @@ async function loadIncomingInvites(uid: string): Promise<GameInvite[]> {
   return data.map(d => ({
     id: d.id,
     fromUid: d.from_uid,
-    fromDisplayName: d.from_display_name,
-    fromPhotoURL: d.from_photo_url,
+    fromNickname: d.nickname,
+    fromAvatarUrl: d.avatar_url,
     toUid: d.to_uid,
     gameId: d.game_id,
     status: d.status,
@@ -106,8 +106,8 @@ export async function loadRecentPlayers(uid: string): Promise<RecentPlayer[]> {
 
   return data.map(d => ({
     uid: d.opponent_id,
-    displayName: d.display_name,
-    photoURL: d.photo_url,
+    nickname: d.nickname,
+    avatarUrl: d.avatar_url,
     lastPlayedAt: new Date(d.last_played_at).getTime(),
     lastGameId: d.last_game_id,
     hidden: d.hidden,

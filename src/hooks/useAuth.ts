@@ -7,31 +7,62 @@ export function useAuth() {
   const [hasResolvedInitialAuthState, setHasResolvedInitialAuthState] = useState(false);
 
   useEffect(() => {
+    const isMagicLink = 
+      window.location.hash.includes('access_token=') || 
+      window.location.hash.includes('type=magiclink') ||
+      window.location.hash.includes('type=signup') ||
+      window.location.search.includes('code=');
+    console.debug('[useAuth] Mount. isMagicLink:', isMagicLink, 'Hash:', window.location.hash.substring(0, 20), 'Search:', window.location.search);
+
     const fetchSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setUser(session?.user ?? null);
-      setHasResolvedInitialAuthState(true);
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) {
+          console.error('[useAuth] getSession error:', error.message);
+        }
+        
+        const currentUser = session?.user ?? null;
+        console.debug('[useAuth] getSession:', currentUser ? `Found user ${currentUser.id}` : 'No session');
+        
+        setUser(currentUser);
+
+        // If it's a magic link, we might want to wait slightly for the onAuthStateChange event
+        // which often follows a successful hash parsing.
+        if (!currentUser && isMagicLink) {
+          console.debug('[useAuth] Magic link detected but session not ready yet. Waiting...');
+          // Don't resolve just yet
+        } else {
+          setHasResolvedInitialAuthState(true);
+        }
+      } catch (err) {
+        console.error('[useAuth] fetchSession unexpected error:', err);
+        setHasResolvedInitialAuthState(true);
+      }
     };
 
     fetchSession();
 
-    // The onAuthStateChange function from '../services/auth' is expected to return a subscription object.
-    // Assuming 'onAuthStateChange' is a wrapper around 'supabase.auth.onAuthStateChange',
-    // the subscription object typically has an 'unsubscribe' method.
-    // The original assignment and usage of 'subscription' is syntactically correct for this pattern.
-    // If there's an issue, it might be in the implementation of 'onAuthStateChange' itself,
-    // or how it's expected to be called.
-    // Without further context on 'onAuthStateChange' or 'useQuestions',
-    // the most faithful interpretation of "Fix the subscription assignment in useAuth"
-    // while also addressing the malformed snippet is to ensure the `fetchSession`
-    // function is correctly structured and the subscription assignment remains as intended.
     const subscription = onAuthStateChange((session) => {
-      setUser(session?.user ?? null);
+      const currentUser = session?.user ?? null;
+      console.debug('[useAuth] Auth state change. Event type?', !!session ? 'SIGNED_IN/PROCESSED' : 'SIGNED_OUT');
+      setUser(currentUser);
       setHasResolvedInitialAuthState(true);
     });
 
+    // Fallback: If after 5 seconds we still haven't resolved (maybe token was invalid)
+    const timer = setTimeout(() => {
+      setHasResolvedInitialAuthState((resolved) => {
+        if (!resolved) {
+          console.warn('[useAuth] Initial auth resolution timed out. Forcing resolution.');
+          return true;
+        }
+        return resolved;
+      });
+    }, 5000);
+
     return () => {
       subscription.unsubscribe();
+      clearTimeout(timer);
     };
   }, []);
 

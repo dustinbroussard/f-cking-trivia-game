@@ -19,7 +19,7 @@ export const subscribeToGame = (gameId: string, callback: (game: GameState) => v
           .from('games')
           .select('*')
           .eq('id', gameId)
-          .single()
+          .maybeSingle()
           .then(({ data, error }) => {
             if (!error && data) callback(mapPostgresGameToState(data));
           });
@@ -30,28 +30,30 @@ export const subscribeToGame = (gameId: string, callback: (game: GameState) => v
 };
 
 export function mapPostgresGameToState(g: any): GameState {
+  const state = g.game_state || {};
+  const res = g.result || {};
+  
   return {
     id: g.id,
-    code: g.code ?? g.join_code,
+    code: g.id, // Using id as fallback for code
     status: g.status,
-    hostId: g.host_id ?? g.host_profile_id,
+    hostId: g.player_ids?.[0] || '', // Assuming first player is host
     playerIds: g.player_ids || [],
-    players: g.players || [],
-    currentTurn: g.current_turn ?? g.current_turn_profile_id,
-
-    winnerId: g.winner_id ?? g.winner_profile_id,
-    currentQuestionId: g.current_question_id ?? g.current_game_question_id,
-    currentQuestionCategory: g.current_question_category,
-    currentQuestionIndex: g.current_question_index,
-    currentQuestionStartedAt: g.current_question_started_at
-      ? new Date(g.current_question_started_at).getTime()
-      : null,
-    questionIds: g.question_ids || [],
-    answers: g.answers || {},
-    finalScores: g.final_scores || {},
-    categoriesUsed: g.categories_used || [],
-    statsRecordedAt: g.stats_recorded_at ? new Date(g.stats_recorded_at).getTime() : undefined,
-    lastUpdated: new Date(g.last_updated ?? g.last_updated_at ?? g.updated_at ?? g.created_at).getTime(),
+    players: state.players || [],
+    currentTurn: g.current_turn_user_id || state.currentTurn,
+    winnerId: g.winner_user_id || res.winnerId,
+    gameMode: g.game_mode,
+    gameState: state,
+    result: res,
+    currentQuestionId: state.currentQuestionId,
+    currentQuestionCategory: state.currentQuestionCategory,
+    currentQuestionIndex: state.currentQuestionIndex,
+    currentQuestionStartedAt: state.currentQuestionStartedAt,
+    questionIds: state.questionIds || [],
+    answers: state.answers || {},
+    finalScores: res.finalScores || {},
+    categoriesUsed: res.categoriesUsed || [],
+    lastUpdated: new Date(g.last_updated).getTime(),
     createdAt: new Date(g.created_at).getTime(),
   };
 }
@@ -78,12 +80,14 @@ export async function createGame(
   const { data, error } = await supabase
     .from('games')
     .insert({
-      code,
-      host_id: hostId,
+      id: code,
       player_ids: [hostId],
-      players: [initialPlayer],
       status: isSolo ? 'active' : 'waiting',
-      current_turn: hostId,
+      game_mode: isSolo ? 'solo' : 'multiplayer',
+      current_turn_user_id: hostId,
+      game_state: {
+        players: [initialPlayer],
+      },
       created_at: now,
       last_updated: now,
     })
@@ -97,16 +101,17 @@ export async function createGame(
 export async function joinGameById(gameId: string, userId: string, displayName: string, avatarUrl?: string) {
   const { data: game, error: getError } = await supabase
     .from('games')
-    .select('player_ids, players')
+    .select('player_ids, game_state')
     .eq('id', gameId)
-    .single();
+    .maybeSingle();
 
-  if (getError) throw getError;
+  if (getError || !game) return;
 
   const playerIds = Array.from(new Set([...(game.player_ids || []), userId]));
   
-  const existingPlayer = (game.players || []).find((p: any) => p.uid === userId);
-  let players = game.players || [];
+  const state = game.game_state || {};
+  const existingPlayer = (state.players || []).find((p: any) => p.uid === userId);
+  let players = state.players || [];
   
   if (!existingPlayer) {
     players = [
@@ -127,9 +132,9 @@ export async function joinGameById(gameId: string, userId: string, displayName: 
     .from('games')
     .update({
       player_ids: playerIds,
-      players: players,
+      game_state: { ...state, players },
       status: playerIds.length >= 2 ? 'active' : 'waiting',
-      current_turn: playerIds.length >= 2 ? (game.player_ids?.[0] || userId) : null,
+      current_turn_user_id: playerIds.length >= 2 ? (game.player_ids?.[0] || userId) : null,
       last_updated: new Date().toISOString(),
     })
     .eq('id', gameId);
@@ -152,11 +157,11 @@ export async function updateGame(gameId: string, patch: Partial<any>) {
 export async function joinGame(gameId: string, userId: string) {
   const { data: game, error: getError } = await supabase
     .from('games')
-    .select('player_ids')
+    .select('player_ids, game_state')
     .eq('id', gameId)
-    .single();
+    .maybeSingle();
 
-  if (getError) throw getError;
+  if (getError || !game) return;
 
   const playerIds = Array.from(new Set([...(game.player_ids || []), userId]));
   
@@ -165,7 +170,7 @@ export async function joinGame(gameId: string, userId: string) {
     .update({
       player_ids: playerIds,
       status: playerIds.length >= 2 ? 'active' : 'waiting',
-      current_turn: playerIds.length >= 2 ? (game.player_ids?.[0] || userId) : null,
+      current_turn_user_id: playerIds.length >= 2 ? (game.player_ids?.[0] || userId) : null,
       last_updated: new Date().toISOString(),
     })
     .eq('id', gameId);
@@ -176,14 +181,15 @@ export async function joinGame(gameId: string, userId: string) {
 export async function updatePlayerActivity(gameId: string, userId: string, isResume = false) {
   const { data: game, error: getError } = await supabase
     .from('games')
-    .select('players')
+    .select('game_state')
     .eq('id', gameId)
-    .single();
+    .maybeSingle();
 
-  if (getError) throw getError;
+  if (getError || !game) return;
 
+  const state = game.game_state || {};
   const activity = Date.now();
-  const players = (game.players || []).map((p: any) => {
+  const players = (state.players || []).map((p: any) => {
     if (p.uid === userId) {
       return { 
         ...p, 
@@ -196,7 +202,10 @@ export async function updatePlayerActivity(gameId: string, userId: string, isRes
 
   const { error } = await supabase
     .from('games')
-    .update({ players, last_updated: new Date().toISOString() })
+    .update({ 
+      game_state: { ...state, players }, 
+      last_updated: new Date().toISOString() 
+    })
     .eq('id', gameId);
   
   if (error) throw error;
@@ -207,9 +216,6 @@ export async function abandonGame(gameId: string) {
     .from('games')
     .update({
       status: 'abandoned',
-      current_question_id: null,
-      current_question_category: null,
-      current_question_started_at: null,
       last_updated: new Date().toISOString(),
     })
     .eq('id', gameId);
@@ -217,14 +223,13 @@ export async function abandonGame(gameId: string) {
 }
 
 export async function persistQuestionsToGame(gameId: string, questionIds: string[]) {
-  const { error } = await supabase
-    .from('games')
-    .update({
-      question_ids: questionIds,
-      last_updated: new Date().toISOString(),
-    })
-    .eq('id', gameId);
-  if (error) throw error;
+  const { data } = await supabase.from('games').select('game_state').eq('id', gameId).maybeSingle();
+  if (!data) return;
+  const state = data?.game_state || {};
+  await supabase.from('games').update({
+    game_state: { ...state, questionIds },
+    last_updated: new Date().toISOString(),
+  }).eq('id', gameId);
 }
 
 export async function setActiveGameQuestion(
@@ -234,30 +239,34 @@ export async function setActiveGameQuestion(
   questionIndex: number,
   startedAt: number
 ) {
-  const { error } = await supabase
-    .from('games')
-    .update({
-      current_question_id: questionId,
-      current_question_category: category,
-      current_question_index: questionIndex,
-      current_question_started_at: startedAt,
-      last_updated: new Date().toISOString(),
-    })
-    .eq('id', gameId);
-  if (error) throw error;
+  const { data } = await supabase.from('games').select('game_state').eq('id', gameId).maybeSingle();
+  if (!data) return;
+  const state = data?.game_state || {};
+  await supabase.from('games').update({
+    game_state: { 
+      ...state, 
+      currentQuestionId: questionId,
+      currentQuestionCategory: category,
+      currentQuestionIndex: questionIndex,
+      currentQuestionStartedAt: startedAt
+    },
+    last_updated: new Date().toISOString(),
+  }).eq('id', gameId);
 }
 
 export async function clearActiveGameQuestion(gameId: string) {
-  const { error } = await supabase
-    .from('games')
-    .update({
-      current_question_id: null,
-      current_question_category: null,
-      current_question_started_at: null,
-      last_updated: new Date().toISOString(),
-    })
-    .eq('id', gameId);
-  if (error) throw error;
+  const { data } = await supabase.from('games').select('game_state').eq('id', gameId).maybeSingle();
+  if (!data) return;
+  const state = data?.game_state || {};
+  await supabase.from('games').update({
+    game_state: { 
+      ...state, 
+      currentQuestionId: null,
+      currentQuestionCategory: null,
+      currentQuestionStartedAt: null
+    },
+    last_updated: new Date().toISOString(),
+  }).eq('id', gameId);
 }
 
 export async function recordAnswer(gameId: string, questionId: string, userId: string, answer: GameAnswer) {
@@ -275,7 +284,7 @@ export async function getGameById(gameId: string): Promise<GameState | null> {
     .from('games')
     .select('*')
     .eq('id', gameId)
-    .single();
+    .maybeSingle();
   
   if (error) {
     if (error.code === 'PGRST116') return null;
@@ -288,9 +297,9 @@ export async function getGameByCode(code: string): Promise<GameState | null> {
   const { data, error } = await supabase
     .from('games')
     .select('*')
-    .eq('code', code.toUpperCase())
+    .eq('id', code.toUpperCase())
     .eq('status', 'waiting')
-    .single();
+    .maybeSingle();
   
   if (error) {
     if (error.code === 'PGRST116') return null;
@@ -341,16 +350,17 @@ async function loadMessages(game_id: string) {
       .limit(50),
     supabase
       .from('games')
-      .select('players')
+      .select('game_state')
       .eq('id', game_id)
-      .single(),
+      .maybeSingle(),
   ]);
 
   if (messagesError) throw messagesError;
   if (gameError) throw gameError;
 
+  const state = game?.game_state || {};
   const playersById = new Map(
-    ((game?.players as any[]) || []).map((player) => [player.uid, player])
+    ((state.players as any[]) || []).map((player) => [player.uid, player])
   );
 
   return (messages || []).map((m) => {
@@ -370,17 +380,18 @@ export async function getGameQuestions(game_id: string): Promise<TriviaQuestion[
   // In Supabase, if questions are stored in a regular table, we can fetch them via a join or where in
   const { data: game, error: getError } = await supabase
     .from('games')
-    .select('question_ids')
+    .select('game_state')
     .eq('id', game_id)
-    .single();
+    .maybeSingle();
   
   if (getError) throw getError;
-  if (!game.question_ids || game.question_ids.length === 0) return [];
+  const questionIds = game.game_state?.questionIds || [];
+  if (questionIds.length === 0) return [];
 
   const { data: qData, error: qError } = await supabase
     .from('questions')
     .select('*')
-    .in('id', game.question_ids);
+    .in('id', questionIds);
   
   if (qError) throw qError;
   return (qData || []).map((q: any) => ({

@@ -1,6 +1,6 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { X } from 'lucide-react';
+import { X, LogOut } from 'lucide-react';
 import { UserSettings } from '../types';
 
 interface SettingsModalProps {
@@ -8,6 +8,7 @@ interface SettingsModalProps {
   settings: UserSettings;
   onClose: () => void;
   onUpdate: (patch: Partial<UserSettings>) => void;
+  onSignOut: () => void;
 }
 
 function ToggleRow({
@@ -48,6 +49,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   settings,
   onClose,
   onUpdate,
+  onSignOut,
 }) => {
   return (
     <AnimatePresence>
@@ -122,8 +124,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 checked={settings.commentaryEnabled}
                 onChange={(checked) => onUpdate({ commentaryEnabled: checked })}
               />
+
+              <div className="pt-4 border-t theme-border">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onSignOut();
+                  }}
+                  className="w-full h-12 flex items-center justify-center gap-2 rounded-2xl bg-rose-500/10 text-rose-500 font-bold hover:bg-rose-500/20 transition-all active:scale-95"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Sign Out
+                </button>
+              </div>
             </div>
           </motion.div>
+
         </motion.div>
       )}
     </AnimatePresence>

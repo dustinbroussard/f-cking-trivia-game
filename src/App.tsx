@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useState, useEffect, useRef } from 'react';
-import { signUpWithEmail, signInWithEmail, signOutUser, onAuthStateChange } from './services/auth';
+import { signInWithMagicLink, signOutUser, onAuthStateChange } from './services/auth';
 import {
   recordAnswer,
   subscribeToGame,
@@ -41,7 +41,7 @@ import { HECKLE_ROTATION_MS, shouldEnableHeckles } from './content/heckles';
 import { getTrashTalkLine, TrashTalkEvent } from './content/trashTalk';
 import { publicAsset } from './assets';
 import { motion, AnimatePresence } from 'motion/react';
-import { LogOut, RefreshCcw, Trophy, ArrowLeft, Volume2, VolumeX, Send, Loader2, History, X, Sun, Moon, SlidersHorizontal, Mail, Lock } from 'lucide-react';
+import { LogOut, RefreshCcw, Trophy, ArrowLeft, Volume2, VolumeX, Send, Loader2, History, X, Sun, Moon, SlidersHorizontal, Mail } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { DEFAULT_USER_SETTINGS, getLocalSettings, loadUserSettings, mergeSettings, saveLocalSettings, saveUserSettings } from './services/userSettings';
 import { generateHeckles } from './services/gemini';
@@ -132,12 +132,22 @@ export default function App() {
   const { user, hasResolvedInitialAuthState } = useAuth();
   const { 
     game, setGame, players, setPlayers, messages, setMessages,
-    playerProfile, recentPlayers, recentCompletedGames, incomingInvites 
+    playerProfile, recentPlayers, recentCompletedGames, incomingInvites,
+    hasResolvedProfile
   } = useGameStore(user);
   const {
     questions, setQuestions, currentQuestion, setCurrentQuestion,
     isFetchingQuestions, setIsFetchingQuestions, fetchQuestions, markSeen, activeQuestionIdRef
   } = useQuestions(user, game?.id);
+
+  if (import.meta.env.DEV) {
+    console.debug('[App] Render state:', {
+      user: user ? `User(id=${user.id})` : 'NULL',
+      hasResolvedAuth: hasResolvedInitialAuthState,
+      hasProfile: !!playerProfile,
+      hasResolvedProfile: hasResolvedProfile
+    });
+  }
 
   const [settings, setSettings] = useState<UserSettings>(() => getLocalSettings());
   const {
@@ -178,10 +188,10 @@ export default function App() {
   const [inviteFeedback, setInviteFeedback] = useState<string | null>(null);
   
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
-  const [authStep, setAuthStep] = useState<'choice' | 'login' | 'signup'>('choice');
-  const [signupSuccess, setSignupSuccess] = useState(false);
+  const [isMagicLinkSent, setIsMagicLinkSent] = useState(false);
+  const [nickname, setNickname] = useState('');
+  const [isSavingNickname, setIsSavingNickname] = useState(false);
 
   const [pastGames, setPastGames] = useState<GameState[]>([]);
   const [selectedMatchup, setSelectedMatchup] = useState<MatchupHistoryState | null>(null);
@@ -361,8 +371,8 @@ export default function App() {
   const recordRecentPlayer = async (ownerUid: string, player: Player, gameId: string) => {
     try {
       await updateRecentPlayer(ownerUid, player.uid, {
-        display_name: player.name,
-        photo_url: player.avatarUrl || '',
+        nickname: player.name,
+        avatar_url: player.avatarUrl || '',
         last_played_at: new Date().toISOString(),
         last_game_id: gameId,
         hidden: false,
@@ -395,7 +405,7 @@ export default function App() {
       const isNewJoiner = !gameData.playerIds.includes(user.id);
 
       if (isNewJoiner) {
-        await joinGameById(gameId, user.id, user.displayName || 'Player', _avatarUrl);
+        await joinGameById(gameId, user.id, playerProfile?.nickname || user.email || 'Player', _avatarUrl);
       }
 
       setLoadingStep('finalizing_lobby');
@@ -750,7 +760,7 @@ export default function App() {
     const requestId = ++heckleRequestIdRef.current;
 
     generateHeckles({
-      playerName: currentPlayer?.name || user.displayName || 'Player',
+      playerName: currentPlayer?.name || playerProfile?.nickname || user?.email || 'Player',
       opponentName: opponent.name,
       gameState: `${currentPlayer?.name || 'You'} score ${currentPlayer?.score || 0}, streak ${currentPlayer?.streak || 0}; ${opponent.name} score ${opponent.score || 0}, streak ${opponent.streak || 0}.`,
       recentFailure: lastFailureRef.current,
@@ -809,13 +819,8 @@ export default function App() {
     saveLocalSettings(settings);
   }, [settings]);
 
-  useEffect(() => {
-    if (user?.id) {
-      ensurePlayerProfile(user).catch((err) => {
-        console.error('[ensurePlayerProfile] Failed:', err);
-      });
-    }
-  }, [user?.id]);
+  // Profile is now handled via the Nickname screen for new users.
+  // We no longer call ensurePlayerProfile on every login.
 
   useEffect(() => {
     if (!user?.id) {
@@ -1249,63 +1254,58 @@ export default function App() {
     });
   }, [game?.id, game?.currentTurn, game?.status, isSolo, logoSrc, players, user?.id]);
 
-  const handleSignIn = async () => {
-    if (!email || !password) {
-      setError('Please enter both email and password.');
+  const handleSendMagicLink = async () => {
+    if (!email) {
+      setError('Please enter your email.');
       return;
     }
     
+    // Simple email validation
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+
     setError(null);
     setAuthLoading(true);
     try {
-      await signInWithEmail(email, password);
+      await signInWithMagicLink(email);
+      setIsMagicLinkSent(true);
     } catch (err: any) {
-      console.error('[handleSignIn] Failed:', err);
-      setError(err.message || 'Failed to sign in. Check your credentials.');
+      console.error('[handleSendMagicLink] Failed:', err);
+      let message = err.message || 'Failed to send login link. Please try again.';
+      if (message.includes('rate limit')) {
+        message = 'Slow down! Too many requests. Try again in a minute.';
+      } else if (message.includes('invalid email')) {
+        message = 'That email looks like bullshit. Try a real one.';
+      }
+      setError(message);
     } finally {
       setAuthLoading(false);
     }
   };
 
-  const handleSignUp = async () => {
-    if (!email || !password) {
-      setError('Please enter both email and password.');
-      return;
-    }
-    
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.');
-      return;
-    }
-
+  const handleSaveNickname = async () => {
+    if (!user || !nickname.trim() || isSavingNickname) return;
+    setIsSavingNickname(true);
     setError(null);
-    setAuthLoading(true);
     try {
-      const data = await signUpWithEmail(email, password);
-      // Supabase might require email confirmation depending on project settings.
-      // If data.user exists but data.session is null, confirmation is likely required.
-      if (data?.user && !data?.session) {
-        setSignupSuccess(true);
-      }
+      await ensurePlayerProfile(user, nickname.trim());
     } catch (err: any) {
-      console.error('[handleSignUp] Failed:', err);
-      setError(err.message || 'Failed to create account.');
+      console.error('[handleSaveNickname] Failed:', err);
+      setError("Failed to save nickname. Try something else.");
     } finally {
-      setAuthLoading(false);
+      setIsSavingNickname(false);
     }
   };
 
   const startSoloGame = async (avatarUrl: string) => {
-    if (!user) {
-      await handleSignIn();
-      return;
-    }
     setIsStartingGame(true);
     setLoadingStep('creating_match');
     setIsSolo(true);
 
     try {
-      const newGame = await createGame(user.id, user.displayName || 'Player 1', avatarUrl, true);
+      const newGame = await createGame(user.id, playerProfile?.nickname || user.email || 'Player 1', avatarUrl, true);
       const gameId = newGame.id;
 
       setIsFetchingQuestions(true);
@@ -1330,17 +1330,13 @@ export default function App() {
   };
 
   const startMultiplayerGame = async (avatarUrl: string) => {
-    if (!user) {
-      await handleSignIn();
-      return;
-    }
     void requestTurnNotificationPermission();
     setIsStartingGame(true);
     setLoadingStep('creating_match');
     setIsSolo(false);
 
     try {
-      const newGame = await createGame(user.id, user.displayName || 'Host', avatarUrl, false);
+      const newGame = await createGame(user.id, playerProfile?.nickname || user.email || 'Host', avatarUrl, false);
       const gameId = newGame.id;
 
       setIsFetchingQuestions(true);
@@ -1365,10 +1361,7 @@ export default function App() {
   };
 
   const joinGame = async (code: string, avatarUrl: string) => {
-    if (!user) {
-      await handleSignIn();
-      return;
-    }
+
     void requestTurnNotificationPermission();
     setIsJoiningGame(true);
     setLoadingStep('joining_match');
@@ -1381,7 +1374,7 @@ export default function App() {
         return;
       }
 
-      await joinGameById(waitingGame.id, user.id, user.displayName || 'Player', avatarUrl);
+      await joinGameById(waitingGame.id, user.id, playerProfile?.nickname || user.email || 'Player', avatarUrl);
     } catch (err) {
       console.error('[joinGame] Failed:', err);
       setError("Failed to join game.");
@@ -1392,10 +1385,7 @@ export default function App() {
   };
 
   const inviteRecentPlayer = async (player: RecentPlayer, avatarUrl: string) => {
-    if (!user) {
-      await handleSignIn();
-      return;
-    }
+
     void requestTurnNotificationPermission();
 
     setIsStartingGame(true);
@@ -1403,7 +1393,7 @@ export default function App() {
     setIsSolo(false);
 
     try {
-      const newGame = await createGame(user.id, user.displayName || 'Host', avatarUrl, false);
+      const newGame = await createGame(user.id, playerProfile?.nickname || user.email || 'Host', avatarUrl, false);
       const gameId = newGame.id;
 
       setIsFetchingQuestions(true);
@@ -1418,11 +1408,11 @@ export default function App() {
       
       await sendInvite({
         uid: user.id,
-        displayName: user.displayName || 'Host',
-        photoURL: avatarUrl || user.photoURL || undefined,
+        nickname: playerProfile?.nickname || user?.email || 'Host',
+        avatarUrl: avatarUrl || playerProfile?.avatarUrl || undefined,
       }, player, gameId);
 
-      setInviteFeedback(`Invite sent to ${player.displayName}`);
+      setInviteFeedback(`Invite sent to ${player.nickname}`);
       setGame(newGame);
     } catch (err) {
       console.error('[inviteRecentPlayer] Failed:', err);
@@ -1435,19 +1425,16 @@ export default function App() {
   };
 
   const handleAcceptInvite = async (invite: GameInvite, avatarUrl: string) => {
-    if (!user) {
-      await handleSignIn();
-      return;
-    }
+
     void requestTurnNotificationPermission();
 
     setIsJoiningGame(true);
     setLoadingStep('joining_match');
 
     try {
-      await joinGameById(invite.gameId, user.id, user.displayName || 'Player', avatarUrl);
+      await joinGameById(invite.gameId, user.id, playerProfile?.nickname || user?.email || 'Player', avatarUrl);
       await acceptInvite(invite.id, user.id);
-      setInviteFeedback(`Joined ${invite.fromDisplayName}'s match`);
+      setInviteFeedback(`Joined ${invite.fromNickname}'s match`);
     } catch (err) {
       console.error('[handleAcceptInvite] Failed:', err);
       setError("Failed to accept invite.");
@@ -1462,7 +1449,7 @@ export default function App() {
 
     try {
       await declineInvite(invite.id, user.id);
-      setInviteFeedback(`Declined invite from ${invite.fromDisplayName}`);
+      setInviteFeedback(`Declined invite from ${invite.fromNickname}`);
     } catch (err) {
       console.error('[handleDeclineInvite] Failed:', err);
       setError("Failed to decline invite.");
@@ -1979,6 +1966,7 @@ export default function App() {
   );
 
   if (isInitializing) {
+    console.debug('[App] Initializing auth...');
     return (
       <>
         <audio ref={themeAudioRef} src={themeAudioSrc} loop />
@@ -2001,6 +1989,7 @@ export default function App() {
   }
 
   if (!user) {
+    console.debug('[App] No user found. Showing AuthScreen.');
     return (
       <>
         <audio ref={themeAudioRef} src={themeAudioSrc} loop />
@@ -2046,115 +2035,81 @@ export default function App() {
             </motion.div>
 
             <AnimatePresence mode="wait">
-              {authStep === 'choice' ? (
-                <motion.div
-                  key="choice-step"
-                  initial={{ x: -20, opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                  exit={{ x: 20, opacity: 0 }}
-                  className="w-full space-y-4"
-                >
-                  <button
-                    type="button"
-                    onClick={() => { setAuthStep('login'); setError(null); }}
-                    className="w-full h-14 flex items-center justify-center rounded-2xl bg-pink-600 text-white font-black uppercase tracking-widest hover:bg-pink-500 transition-all active:scale-95 shadow-lg shadow-pink-900/20"
-                  >
-                    Log In
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setAuthStep('signup'); setError(null); }}
-                    className="w-full h-14 flex items-center justify-center rounded-2xl theme-panel border-2 border-white/10 font-black uppercase tracking-widest hover:bg-white/5 transition-all active:scale-95 shadow-lg"
-                  >
-                    Create Account
-                  </button>
-                </motion.div>
-              ) : signupSuccess ? (
+              {isMagicLinkSent ? (
                 <motion.div
                   key="success-step"
                   initial={{ scale: 0.9, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
-                  className="w-full theme-panel border p-6 rounded-2xl text-center space-y-4"
+                  className="w-full theme-panel border p-6 rounded-2xl text-center space-y-4 shadow-xl"
                 >
-                  <Trophy className="w-12 h-12 text-yellow-400 mx-auto" />
-                  <h3 className="text-xl font-black uppercase">Account Created!</h3>
+                  <div className="w-16 h-16 bg-pink-600/20 rounded-full flex items-center justify-center mx-auto">
+                    <Mail className="w-8 h-8 text-pink-500" />
+                  </div>
+                  <h3 className="text-xl font-black uppercase">Check Your Inbox</h3>
                   <p className="text-sm theme-text-secondary leading-relaxed">
-                    Check your email to confirm your account. Once confirmed, you can log in.
+                    We sent a sign-in link to <span className="text-pink-500 font-bold">{email}</span>.<br />
+                    Click it to join the game instantly.
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => { setSignupSuccess(false); setAuthStep('login'); }}
-                    className="w-full py-3 rounded-xl bg-white text-black font-bold uppercase tracking-wider hover:bg-neutral-200 transition-all"
-                  >
-                    Back to Log In
-                  </button>
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsMagicLinkSent(false)}
+                      className="text-xs font-bold uppercase tracking-widest theme-text-muted hover:text-pink-500 transition-colors"
+                    >
+                      Wrong email? Try again
+                    </button>
+                  </div>
                 </motion.div>
               ) : (
                 <motion.div
                   key="form-step"
-                  initial={{ x: 20, opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                  exit={{ x: -20, opacity: 0 }}
-                  className="w-full space-y-4"
+                  initial={{ y: 20, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: -20, opacity: 0 }}
+                  className="w-full space-y-6"
                 >
-                  <div className="flex items-center gap-3 mb-2">
-                    <button
-                      type="button"
-                      onClick={() => setAuthStep('choice')}
-                      className="p-2 -ml-2 rounded-lg hover:bg-white/5 transition-colors"
-                      title="Go back"
-                    >
-                      <ArrowLeft className="w-5 h-5 theme-text-muted" />
-                    </button>
-                    <h3 className="text-lg font-black uppercase tracking-tight">
-                      {authStep === 'login' ? 'Welcome Back' : 'Join the F-cking Game'}
+                  <div className="text-center space-y-2">
+                    <h3 className="text-2xl font-black uppercase tracking-tight">
+                      Sign In Instantly
                     </h3>
+                    <p className="text-sm theme-text-muted">
+                      No password needed. We’ll email you a sign-in link.
+                    </p>
                   </div>
 
-                  <div className="space-y-3">
-                    <div className="relative">
-                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 theme-text-muted" />
+                  <div className="space-y-4">
+                    <div className="relative group">
+                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 theme-text-muted group-focus-within:text-pink-500 transition-colors" />
                       <input
                         type="email"
-                        placeholder="Email address"
+                        placeholder="your@email.com"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        className="w-full h-12 pl-12 pr-4 rounded-xl theme-panel border bg-transparent focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all text-sm sm:text-base theme-inset"
+                        onKeyDown={(e) => e.key === 'Enter' && handleSendMagicLink()}
+                        className="w-full h-14 pl-12 pr-4 rounded-2xl theme-panel border bg-transparent focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all text-base theme-inset"
+                        autoComplete="email"
                       />
                     </div>
-                    <div className="relative">
-                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 theme-text-muted" />
-                      <input
-                        type="password"
-                        placeholder="Password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && (authStep === 'login' ? handleSignIn() : handleSignUp())}
-                        className="w-full h-12 pl-12 pr-4 rounded-xl theme-panel border bg-transparent focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all text-sm sm:text-base theme-inset"
-                      />
-                    </div>
-                  </div>
 
-                  <button
-                    type="button"
-                    onClick={authStep === 'login' ? handleSignIn : handleSignUp}
-                    disabled={authLoading}
-                    className="w-full h-12 flex items-center justify-center rounded-xl bg-pink-600 text-white font-bold hover:bg-pink-500 transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-pink-900/20"
-                  >
-                    {authLoading ? (
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                    ) : authStep === 'login' ? (
-                      'Log In'
-                    ) : (
-                      'Create Account'
-                    )}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={handleSendMagicLink}
+                      disabled={authLoading}
+                      className="w-full h-14 flex items-center justify-center rounded-2xl bg-pink-600 text-white font-black uppercase tracking-widest hover:bg-pink-500 transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-pink-900/20"
+                    >
+                      {authLoading ? (
+                        <Loader2 className="w-6 h-6 animate-spin" />
+                      ) : (
+                        'Send Login Link'
+                      )}
+                    </button>
+                  </div>
 
                   {error && (
                     <motion.div
                       initial={{ opacity: 0, y: 5 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="p-4 rounded-xl border border-rose-500/40 bg-rose-950/40 text-rose-200 text-xs sm:text-sm font-medium text-center shadow-inner"
+                      className="p-4 rounded-2xl border border-rose-500/40 bg-rose-950/40 text-rose-100 text-sm font-bold text-center shadow-inner"
                     >
                       {error}
                     </motion.div>
@@ -2169,9 +2124,79 @@ export default function App() {
               </p>
             </div>
           </div>
-
         </div>
       </>
+    );
+  }
+
+  if (!hasResolvedProfile) {
+    console.debug('[App] User present but profile still resolving...');
+    return (
+      <div data-theme={themeMode} className="app-theme min-h-screen flex flex-col items-center justify-center p-6 space-y-6 relative">
+        <Loader2 className="h-10 w-10 animate-spin text-pink-500" />
+        <div className="text-center space-y-2">
+          <p className="text-sm font-black uppercase tracking-[0.3em] theme-text-muted">Checking Profile</p>
+          <p className="text-sm theme-text-muted">One moment, while we gear up for your game...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (user && !playerProfile && hasResolvedProfile) {
+    console.debug('[App] No profile found. Showing NicknameScreen.');
+    return (
+      <div data-theme={themeMode} className="app-theme h-dvh min-h-dvh flex flex-col items-center px-4 pt-12 pb-5 relative overflow-hidden">
+        <div className="flex-1 flex flex-col items-center justify-center w-full max-w-sm space-y-8">
+          <div className="text-center space-y-4">
+            <h2 className="text-3xl font-black uppercase tracking-tight">One Last Thing</h2>
+            <p className="theme-text-muted">What should we call you while we’re roasting you?</p>
+          </div>
+
+          <div className="w-full space-y-4">
+            <div className="relative group">
+              <input
+                type="text"
+                placeholder="Pick a nickname..."
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSaveNickname()}
+                className="w-full h-14 px-6 rounded-2xl theme-panel border bg-transparent focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all text-lg font-bold theme-inset text-center"
+                autoFocus
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={handleSaveNickname}
+              disabled={isSavingNickname || !nickname.trim()}
+              className="w-full h-14 flex items-center justify-center rounded-2xl bg-pink-600 text-white font-black uppercase tracking-widest hover:bg-pink-500 transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-pink-900/20"
+            >
+              {isSavingNickname ? (
+                <Loader2 className="w-6 h-6 animate-spin" />
+              ) : (
+                'Start Playing'
+              )}
+            </button>
+          </div>
+
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 rounded-2xl border border-rose-500/40 bg-rose-950/40 text-rose-100 text-sm font-bold text-center shadow-inner"
+            >
+              {error}
+            </motion.div>
+          )}
+
+          <button 
+            onClick={() => signOutUser()}
+            className="text-xs font-bold uppercase tracking-widest theme-text-muted hover:text-pink-500 transition-colors"
+          >
+            Actually, let me out of here
+          </button>
+        </div>
+      </div>
     );
   }
 
@@ -2246,7 +2271,7 @@ export default function App() {
               )}
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-widest theme-text-muted hidden sm:block">
-                  {user.displayName}
+                  {playerProfile?.nickname || user?.email || 'Player'}
                 </span>
                 <button type="button" onClick={openSignOutConfirm} className="p-2 theme-icon-button transition-colors rounded-full" aria-label="Sign out">
                   <LogOut className="w-5 h-5" />
@@ -2643,6 +2668,7 @@ export default function App() {
             settings={settings}
             onClose={() => setShowSettings(false)}
             onUpdate={updateSettings}
+            onSignOut={openSignOutConfirm}
           />
         </Suspense>
 

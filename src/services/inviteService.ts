@@ -40,8 +40,8 @@ async function loadInvites(userId: string): Promise<GameInvite[]> {
     id: d.id,
     gameId: d.game_id,
     fromUid: d.from_uid,
-    fromDisplayName: d.from_display_name,
-    fromPhotoURL: d.from_photo_url,
+    fromNickname: d.nickname,
+    fromAvatarUrl: d.avatar_url,
     toUid: d.to_uid,
     status: d.status as any,
     createdAt: new Date(d.created_at).getTime(),
@@ -49,7 +49,7 @@ async function loadInvites(userId: string): Promise<GameInvite[]> {
 }
 
 export async function sendInvite(
-  from: { uid: string; displayName: string; photoURL?: string },
+  from: { uid: string; nickname: string; avatarUrl?: string },
   to: { uid: string },
   gameId: string
 ) {
@@ -58,8 +58,8 @@ export async function sendInvite(
     .insert({
       game_id: gameId,
       from_uid: from.uid,
-      from_display_name: from.displayName,
-      from_photo_url: from.photoURL,
+      nickname: from.nickname,
+      avatar_url: from.avatarUrl,
       to_uid: to.uid,
       status: 'pending',
       created_at: new Date().toISOString()

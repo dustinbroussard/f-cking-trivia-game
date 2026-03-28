@@ -17,25 +17,25 @@ function sanitizeSettings(value: any): Partial<UserSettings> {
 
   const result: Partial<UserSettings> = {};
 
-  if (value.theme_mode === 'light' || value.theme_mode === 'dark' || value.themeMode === 'light' || value.themeMode === 'dark') {
-    result.themeMode = value.theme_mode || value.themeMode;
+  if (value.themeMode === 'light' || value.themeMode === 'dark') {
+    result.themeMode = value.themeMode;
   }
-  if (typeof (value.sound_enabled ?? value.soundEnabled) === 'boolean') {
-    result.soundEnabled = value.sound_enabled ?? value.soundEnabled;
+  if (typeof value.soundEnabled === 'boolean') {
+    result.soundEnabled = value.soundEnabled;
   }
-  if (typeof (value.music_enabled ?? value.musicEnabled) === 'boolean') {
-    result.musicEnabled = value.music_enabled ?? value.musicEnabled;
+  if (typeof value.musicEnabled === 'boolean') {
+    result.musicEnabled = value.musicEnabled;
   }
-  if (typeof (value.sfx_enabled ?? value.sfxEnabled) === 'boolean') {
-    result.sfxEnabled = value.sfx_enabled ?? value.sfxEnabled;
+  if (typeof value.sfxEnabled === 'boolean') {
+    result.sfxEnabled = value.sfxEnabled;
   }
-  if (typeof (value.commentary_enabled ?? value.commentaryEnabled) === 'boolean') {
-    result.commentaryEnabled = value.commentary_enabled ?? value.commentaryEnabled;
+  if (typeof value.commentaryEnabled === 'boolean') {
+    result.commentaryEnabled = value.commentaryEnabled;
   }
-  if (typeof (value.updated_at ?? value.updatedAt) === 'number') {
-    result.updatedAt = Number(value.updated_at ?? value.updatedAt);
-  } else if (value.updated_at || value.updatedAt) {
-    result.updatedAt = new Date(value.updated_at || value.updatedAt).getTime();
+  if (typeof value.updatedAt === 'number') {
+    result.updatedAt = Number(value.updatedAt);
+  } else if (value.updatedAt) {
+    result.updatedAt = new Date(value.updatedAt).getTime();
   }
 
   return result;
@@ -101,27 +101,27 @@ export function saveLocalSettings(settings: UserSettings) {
 export async function loadUserSettings(uid: string): Promise<Partial<UserSettings> | null> {
   const { data, error } = await supabase
     .from('user_settings')
-    .select('*')
+    .select('settings')
     .eq('user_id', uid)
-    .single();
+    .maybeSingle();
 
-  if (error && error.code !== 'PGRST116') throw error;
-  if (!data) return null;
+  if (error) {
+    console.error('[loadUserSettings] Error:', error.message);
+    return null;
+  }
+  if (!data?.settings) return null;
 
-  return sanitizeSettings(data);
+  return sanitizeSettings(data.settings);
 }
 
 export async function saveUserSettings(uid: string, settings: UserSettings) {
+  const now = new Date().toISOString();
   const { error } = await supabase
     .from('user_settings')
     .upsert({
       user_id: uid,
-      theme_mode: settings.themeMode,
-      sound_enabled: settings.soundEnabled,
-      music_enabled: settings.musicEnabled,
-      sfx_enabled: settings.sfxEnabled,
-      commentary_enabled: settings.commentaryEnabled,
-      updated_at: settings.updatedAt,
+      settings: settings,
+      updated_at: now,
     });
   if (error) throw error;
 }

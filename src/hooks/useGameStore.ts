@@ -22,6 +22,7 @@ export function useGameStore(user: any | null) {
   const [recentPlayers, setRecentPlayers] = useState<RecentPlayer[]>([]);
   const [recentCompletedGames, setRecentCompletedGames] = useState<RecentCompletedGame[]>([]);
   const [incomingInvites, setIncomingInvites] = useState<GameInvite[]>([]);
+  const [hasResolvedProfile, setHasResolvedProfile] = useState(false);
 
   // Subscriptions
   useEffect(() => {
@@ -52,10 +53,18 @@ export function useGameStore(user: any | null) {
       setRecentPlayers([]);
       setRecentCompletedGames([]);
       setIncomingInvites([]);
+      setHasResolvedProfile(true);
       return;
     }
 
-    const unsubscribeProfile = subscribePlayerProfile(user.id, (profile) => setPlayerProfile(profile));
+    setHasResolvedProfile(false);
+    const unsubscribeProfile = subscribePlayerProfile(user.id, (profile) => {
+      setPlayerProfile(profile);
+      setHasResolvedProfile(true);
+    }, (error) => {
+      console.error(error);
+      setHasResolvedProfile(true); // Treat as resolved even if error occurred, to avoid blocked state
+    });
     const unsubscribeRecentPlayers = subscribeRecentPlayers(user.id, (p) => setRecentPlayers(p));
     const unsubscribeRecentGames = subscribeRecentCompletedGames(user.id, (g) => setRecentCompletedGames(g));
     const unsubscribeInvites = subscribeToIncomingInvites(user.id, (i) => setIncomingInvites(i));
@@ -79,5 +88,6 @@ export function useGameStore(user: any | null) {
     recentPlayers,
     recentCompletedGames,
     incomingInvites,
+    hasResolvedProfile,
   };
 }

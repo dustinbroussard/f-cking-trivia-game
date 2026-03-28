@@ -77,17 +77,15 @@ export interface PlayerStatsSummary {
 
 export interface PlayerProfile {
   userId: string;
-  displayName: string;
-  photoURL?: string;
+  nickname: string;
+  avatarUrl?: string;
   createdAt: any;
   updatedAt: any;
-  lastSeenAt: any;
-  stats: PlayerStatsSummary;
 }
 
 export interface RecentCompletedGame {
   gameId: string;
-  players: { uid: string; displayName: string }[];
+  players: { uid: string; nickname: string }[];
   winnerId: string | null;
   finalScores: Record<string, number>;
   categoriesUsed: string[];
@@ -98,8 +96,8 @@ export interface RecentCompletedGame {
 
 export interface MatchupSummary {
   opponentId: string;
-  opponentDisplayName: string;
-  opponentPhotoURL?: string;
+  opponentNickname: string;
+  opponentAvatarUrl?: string;
   wins: number;
   losses: number;
   totalGames: number;
@@ -115,16 +113,18 @@ export interface GameState {
   players: Player[];
   currentTurn: string;
   winnerId: string | null;
+  gameMode?: string;
+  gameState?: any;
+  result?: any;
+  // Convenience fields mapped from JSON columns
   currentQuestionId?: string | null;
   currentQuestionCategory?: string | null;
   currentQuestionIndex?: number;
   currentQuestionStartedAt?: number | null;
   questionIds?: string[];
   answers?: Record<string, Record<string, GameAnswer>>;
-  completedAt?: number | null;
   finalScores?: Record<string, number>;
   categoriesUsed?: string[];
-  statsRecordedAt?: number | null;
   createdAt: any;
   lastUpdated: any;
 }
@@ -140,8 +140,8 @@ export interface UserSettings {
 
 export interface RecentPlayer {
   uid: string;
-  displayName: string;
-  photoURL?: string;
+  nickname: string;
+  avatarUrl?: string;
   lastPlayedAt: number;
   lastGameId?: string;
   hidden?: boolean;
@@ -150,8 +150,8 @@ export interface RecentPlayer {
 export interface GameInvite {
   id: string;
   fromUid: string;
-  fromDisplayName: string;
-  fromPhotoURL?: string;
+  fromNickname: string;
+  fromAvatarUrl?: string;
   toUid: string;
   gameId: string;
   status: 'pending' | 'accepted' | 'declined' | 'expired';
