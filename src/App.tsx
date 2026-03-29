@@ -277,6 +277,20 @@ export default function App() {
     return 'Failed to start game.';
   };
 
+  const navigateToJoinedGame = (joinedGame: GameState, source: 'joinGame' | 'joinWaitingGameById') => {
+    console.info('[joinFlow] Navigating to game screen', {
+      source,
+      targetView: 'game-view',
+      gameId: joinedGame.id,
+      status: joinedGame.status,
+      playerIds: joinedGame.playerIds,
+      playerCount: joinedGame.playerIds.length,
+    });
+    setIsSolo(joinedGame.playerIds.length === 1);
+    setPlayers(joinedGame.players || []);
+    setGame(joinedGame);
+  };
+
   const handleEnableSound = async () => {
     updateSettings({ soundEnabled: true });
     const played = await enableAudioFromGesture();
@@ -415,31 +429,79 @@ export default function App() {
   const joinWaitingGameById = async (gameId: string, _avatarUrl: string) => {
     if (!user) return false;
 
+    console.info('[joinWaitingGameById] Submitted match ID', {
+      submittedMatchId: gameId,
+      userId: user.id,
+      feature: 'invite-accept',
+    });
+
     try {
       const gameData = await getGameById(gameId);
+      console.info('[joinWaitingGameById] Lookup result', {
+        submittedMatchId: gameId,
+        found: !!gameData,
+        foundGameId: gameData?.id ?? null,
+        status: gameData?.status ?? null,
+        playerIds: gameData?.playerIds ?? [],
+      });
+
       if (!gameData) {
+        console.warn('[joinWaitingGameById] Early return: no game found for match ID', {
+          submittedMatchId: gameId,
+        });
         setError('Invite expired. That match no longer exists.');
         return false;
       }
 
       if (gameData.status !== 'waiting') {
+        console.warn('[joinWaitingGameById] Early return: game filtered by status', {
+          submittedMatchId: gameId,
+          foundGameId: gameData.id,
+          status: gameData.status,
+        });
         setError('Invite expired. That match already started.');
         return false;
       }
 
       if (gameData.playerIds.length >= 2 && !gameData.playerIds.includes(user.id)) {
+        console.warn('[joinWaitingGameById] Early return: game already full', {
+          submittedMatchId: gameId,
+          foundGameId: gameData.id,
+          playerIds: gameData.playerIds,
+        });
         setError('Invite expired. That match is already full.');
         return false;
       }
 
       const isNewJoiner = !gameData.playerIds.includes(user.id);
+      let joinedGame = gameData;
 
       if (isNewJoiner) {
-        await joinGameById(gameId, user.id, playerProfile?.nickname || user.email || 'Player', _avatarUrl);
+        joinedGame = await joinGameById(gameId, user.id, playerProfile?.nickname || user.email || 'Player', _avatarUrl);
+        console.info('[joinWaitingGameById] Joining player update result', {
+          submittedMatchId: gameId,
+          foundGameId: joinedGame?.id ?? gameData.id,
+          updateSucceeded: !!joinedGame,
+        });
+      } else {
+        console.info('[joinWaitingGameById] Player already present in game', {
+          submittedMatchId: gameId,
+          foundGameId: gameData.id,
+          userId: user.id,
+        });
+      }
+
+      if (!joinedGame) {
+        console.warn('[joinWaitingGameById] Early return: join update did not return a refreshed game', {
+          submittedMatchId: gameId,
+          foundGameId: gameData.id,
+        });
+        setError('Failed to join game.');
+        return false;
       }
 
       setLoadingStep('finalizing_lobby');
-      setIsSolo(false);
+      navigateToJoinedGame(joinedGame, 'joinWaitingGameById');
       return true;
     } catch (err) {
       console.error(`[joinWaitingGameById] Failed to join game ${gameId}:`, err);
@@ -1450,14 +1512,68 @@ export default function App() {
     }
 
     try {
+      console.info('[joinGame] Submitted match ID', {
+        submittedMatchId: code,
+        userId: user.id,
+      });
       const waitingGame = await getGameByCode(code);
+      console.info('[joinGame] Lookup result', {
+        submittedMatchId: code,
+        found: !!waitingGame,
+        foundGameId: waitingGame?.id ?? null,
+        status: waitingGame?.status ?? null,
+        playerIds: waitingGame?.playerIds ?? [],
+      });
 
       if (!waitingGame) {
+        console.warn('[joinGame] Early return: no game found for match ID', {
+          submittedMatchId: code,
+        });
         setError("Match not found. Paste a valid match ID.");
         return;
       }
 
-      await joinGameById(waitingGame.id, user.id, playerProfile?.nickname || user.email || 'Player', avatarUrl);
+      if (waitingGame.status !== 'waiting' && !waitingGame.playerIds.includes(user.id)) {
+        console.warn('[joinGame] Early return: game filtered by status', {
+          submittedMatchId: code,
+          foundGameId: waitingGame.id,
+          status: waitingGame.status,
+        });
+        setError('That match is no longer joinable.');
+        return;
+      }
+
+      if (waitingGame.playerIds.length >= 2 && !waitingGame.playerIds.includes(user.id)) {
+        console.warn('[joinGame] Early return: game already full', {
+          submittedMatchId: code,
+          foundGameId: waitingGame.id,
+          playerIds: waitingGame.playerIds,
+        });
+        setError('That match is already full.');
+        return;
+      }
+
+      const joinedGame = waitingGame.playerIds.includes(user.id)
+        ? waitingGame
+        : await joinGameById(waitingGame.id, user.id, playerProfile?.nickname || user.email || 'Player', avatarUrl);
+
+      console.info('[joinGame] Joining player update result', {
+        submittedMatchId: code,
+        foundGameId: waitingGame.id,
+        updateSucceeded: !!joinedGame,
+      });
+
+      if (!joinedGame) {
+        console.warn('[joinGame] Early return: join update did not return a refreshed game', {
+          submittedMatchId: code,
+          foundGameId: waitingGame.id,
+        });
+        setError('Failed to join game.');
+        return;
+      }
+
+      setLoadingStep('finalizing_lobby');
+      navigateToJoinedGame(joinedGame, 'joinGame');
     } catch (err) {
       console.error('[joinGame] Failed:', err);
       setError("Failed to join game.");
@@ -1888,6 +2004,24 @@ export default function App() {
   const lobbyLoadingCopy = isCheckingForResume
     ? { title: 'Checking for an active game', flow: 'Checking account state -> Looking for active matches' }
     : setupLoadingCopy;
+
+  useEffect(() => {
+    console.info('[joinFlow] Screen guard evaluation', {
+      currentView: game ? 'game-view' : 'lobby-view',
+      gameId: game?.id ?? null,
+      gameStatus: game?.status ?? null,
+      isJoiningGame,
+      isCheckingForResume,
+      hasResumePrompt: !!resumePrompt,
+      guardReason: game
+        ? 'localGamePresent'
+        : isJoiningGame
+          ? 'joiningInProgressWithoutLocalGame'
+          : resumePrompt
+            ? 'resumePromptShowing'
+            : 'noLocalGameStateSoLobbyRenders',
+    });
+  }, [game, isJoiningGame, isCheckingForResume, resumePrompt]);
 
   useEffect(() => {
     if (!isMobileChatOpen) return;

@@ -264,10 +264,26 @@ export async function createGame(
 }
 
 export async function joinGameById(gameId: string, userId: string, displayName: string, avatarUrl?: string) {
+  console.info('[joinGameById] Looking up game', {
+    submittedGameId: gameId,
+    userId,
+    displayName,
+  });
   const game = await fetchGameRow(gameId);
   if (!game) {
+    console.warn('[joinGameById] Early return: no game found', {
+      submittedGameId: gameId,
+      userId,
+    });
     return;
   }
+
+  console.info('[joinGameById] Game found', {
+    submittedGameId: gameId,
+    foundGameId: game.id,
+    status: game.status,
+    currentPlayerIds: normalizeStoredGameState(game.game_state).playerIds,
+  });
 
   const state = normalizeStoredGameState(game.game_state);
   const existingPlayer = state.players.find((player) => player.uid === userId);
@@ -291,7 +307,7 @@ export async function joinGameById(gameId: string, userId: string, displayName: 
         } as Player,
       ];
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('games')
     .update({
       status: playerIds.length >= 2 ? 'active' : game.status,
@@ -304,12 +320,24 @@ export async function joinGameById(gameId: string, userId: string, displayName: 
       },
       updated_at: nowIsoString(),
     })
-    .eq('id', gameId);
+    .eq('id', gameId)
+    .select('*')
+    .single();
 
   if (error) {
     logSupabaseError('games', 'update', error, { gameId, userId, purpose: 'joinGameById' });
     throw error;
   }
+
+  console.info('[joinGameById] Join update succeeded', {
+    submittedGameId: gameId,
+    foundGameId: data.id,
+    updatedStatus: data.status,
+    updatedPlayerIds: normalizeStoredGameState(data.game_state).playerIds,
+    joiningPlayerAlreadyExisted: !!existingPlayer,
+  });
+
+  return mapPostgresGameToState(data);
 }
 
 export async function updateGame(gameId: string, patch: Partial<any>) {
