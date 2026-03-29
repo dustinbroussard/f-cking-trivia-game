@@ -57,6 +57,65 @@ function buildInitialStoredGameState(hostId: string, initialPlayer: Player): Per
   };
 }
 
+function buildGamePlayerRows(gameId: string, players: Player[]) {
+  return players
+    .filter((player) => typeof player?.uid === 'string' && player.uid.length > 0)
+    .map((player) => ({
+      game_id: gameId,
+      user_id: player.uid,
+      score: typeof player.score === 'number' ? player.score : 0,
+      streak: typeof player.streak === 'number' ? player.streak : 0,
+      is_online: true,
+    }));
+}
+
+async function syncGamePlayersFromState(gameId: string, players: Player[]) {
+  const rows = buildGamePlayerRows(gameId, players);
+  if (rows.length === 0) {
+    return;
+  }
+
+  const { error } = await supabase
+    .from('game_players')
+    .upsert(rows, { onConflict: 'game_id,user_id' });
+
+  if (error) {
+    if (isMissingTableError(error)) {
+      console.warn('[game_players] Live table unavailable during membership sync; skipping normalized participant sync', {
+        gameId,
+        playerIds: players.map((player) => player.uid),
+      });
+      return;
+    }
+
+    logSupabaseError('game_players', 'upsert', error, {
+      gameId,
+      playerIds: players.map((player) => player.uid),
+    });
+    throw error;
+  }
+}
+
+async function fetchGamePlayerMembership(gameId: string, userId: string) {
+  const { data, error } = await supabase
+    .from('game_players')
+    .select('game_id, user_id')
+    .eq('game_id', gameId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingTableError(error)) {
+      return null;
+    }
+
+    logSupabaseError('game_players', 'select', error, { gameId, userId, purpose: 'fetchGamePlayerMembership' });
+    throw error;
+  }
+
+  return data;
+}
+
 function sanitizeGameResult(value: any) {
   if (!value || typeof value !== 'object') {
     return {};
@@ -332,6 +391,8 @@ export async function createGame(
     throw error;
   }
 
+  await syncGamePlayersFromState(gameId, initialState.players);
+
   return mapPostgresGameToState(data);
 }
 
@@ -400,6 +461,8 @@ export async function joinGameById(gameId: string, userId: string, displayName: 
     logSupabaseError('games', 'update', error, { gameId, userId, purpose: 'joinGameById' });
     throw error;
   }
+
+  await syncGamePlayersFromState(gameId, players);
 
   console.info('[joinGameById] Join update succeeded', {
     submittedGameId: gameId,
@@ -568,22 +631,53 @@ export async function clearActiveGameQuestion(gameId: string) {
 }
 
 export async function recordAnswer(gameId: string, questionId: string, userId: string, answer: GameAnswer) {
+  const [{ data: authData }, gameRow] = await Promise.all([
+    supabase.auth.getUser(),
+    fetchGameRow(gameId),
+  ]);
+  const authenticatedUserId = authData.user?.id ?? null;
+  const effectiveUserId = authenticatedUserId || userId;
+  const gameState = normalizeStoredGameState(gameRow?.game_state);
+  const resumedGameOwnershipMatchesCurrentSession = !!authenticatedUserId && gameState.playerIds.includes(authenticatedUserId);
+
+  console.info('[record_game_answer] Preflight membership check', {
+    gameId,
+    questionId,
+    authenticatedUserId,
+    gamePlayerIds: gameState.playerIds,
+    currentTurnUserId: gameRow?.current_turn_user_id ?? null,
+    userIdSentToRpc: effectiveUserId,
+    resumedGameOwnershipMatchesCurrentSession,
+    rpcUserMatchesAuthenticatedUser: authenticatedUserId === null ? 'unknown' : authenticatedUserId === userId,
+  });
+
+  if (gameRow && resumedGameOwnershipMatchesCurrentSession) {
+    await syncGamePlayersFromState(gameId, gameState.players);
+  }
+
+  const membershipRow = await fetchGamePlayerMembership(gameId, effectiveUserId);
+  console.info('[record_game_answer] Normalized membership before RPC', {
+    gameId,
+    effectiveUserId,
+    membershipRowExists: !!membershipRow,
+  });
+
   const livePayload = {
     p_game_id: gameId,
     p_question_id: questionId,
-    p_user_id: userId,
+    p_user_id: effectiveUserId,
     p_is_correct: answer.isCorrect,
   };
   const legacyPayload = {
     p_game_id: gameId,
     p_question_id: questionId,
-    p_user_id: userId,
+    p_user_id: effectiveUserId,
     p_answer: answer,
   };
   console.info('[record_game_answer] Submitting RPC payload', {
     gameId,
     questionId,
-    userId,
+    userId: effectiveUserId,
     livePayload,
     legacyPayload,
   });
@@ -594,7 +688,7 @@ export async function recordAnswer(gameId: string, questionId: string, userId: s
     console.warn('[record_game_answer] Live RPC signature unavailable, retrying legacy payload', {
       gameId,
       questionId,
-      userId,
+      userId: effectiveUserId,
       livePayload,
       code: error.code,
       message: error.message,
@@ -609,20 +703,20 @@ export async function recordAnswer(gameId: string, questionId: string, userId: s
     console.error('[record_game_answer] RPC failed', {
       gameId,
       questionId,
-      userId,
+      userId: effectiveUserId,
       livePayload,
       legacyPayload,
       code: error.code,
       message: error.message,
     });
-    logSupabaseError('rpc:record_game_answer', 'rpc', error, { gameId, questionId, userId });
+    logSupabaseError('rpc:record_game_answer', 'rpc', error, { gameId, questionId, userId: effectiveUserId });
     throw error;
   }
 
   console.info('[record_game_answer] RPC succeeded', {
     gameId,
     questionId,
-    userId,
+    userId: effectiveUserId,
   });
 
   const updatedGameRow = await fetchGameRow(gameId);

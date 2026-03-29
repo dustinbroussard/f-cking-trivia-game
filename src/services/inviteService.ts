@@ -10,7 +10,7 @@ async function loadDisplayProfiles(ids: string[]) {
 
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, display_name, photo_url')
+    .select('id, nickname, avatar_url')
     .in('id', uniqueIds);
 
   if (error) {
@@ -30,7 +30,7 @@ export function subscribeToIncomingInvites(
     .channel(`invites-${userId}`)
     .on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'game_invites', filter: `to_profile_id=eq.${userId}` },
+      { event: '*', schema: 'public', table: 'game_invites', filter: `to_uid=eq.${userId}` },
       () => {
         loadInvites(userId).then(callback).catch(onError);
       }
@@ -50,7 +50,7 @@ async function loadInvites(userId: string): Promise<GameInvite[]> {
   const { data, error } = await supabase
     .from('game_invites')
     .select('*')
-    .eq('to_profile_id', userId)
+    .eq('to_uid', userId)
     .eq('status', 'pending')
     .order('created_at', { ascending: false });
 
@@ -62,17 +62,17 @@ async function loadInvites(userId: string): Promise<GameInvite[]> {
     throw error;
   }
 
-  const profileMap = await loadDisplayProfiles((data || []).map((invite) => invite.from_profile_id));
+  const profileMap = await loadDisplayProfiles((data || []).map((invite) => invite.from_uid));
 
   return (data || []).map((row) => {
-    const fromProfile = profileMap.get(row.from_profile_id);
+    const fromProfile = profileMap.get(row.from_uid);
     return {
       id: row.id,
       gameId: row.game_id,
-      fromUid: row.from_profile_id,
-      fromNickname: fromProfile?.display_name || 'Player',
-      fromAvatarUrl: fromProfile?.photo_url || undefined,
-      toUid: row.to_profile_id,
+      fromUid: row.from_uid,
+      fromNickname: fromProfile?.nickname || 'Player',
+      fromAvatarUrl: fromProfile?.avatar_url || undefined,
+      toUid: row.to_uid,
       status: row.status as GameInvite['status'],
       createdAt: new Date(row.created_at).getTime(),
     };
@@ -88,8 +88,8 @@ export async function sendInvite(
     .from('game_invites')
     .insert({
       game_id: gameId,
-      from_profile_id: from.uid,
-      to_profile_id: to.uid,
+      from_uid: from.uid,
+      to_uid: to.uid,
       status: 'pending',
       created_at: nowIsoString(),
     });
@@ -104,7 +104,7 @@ async function updateInviteStatus(inviteId: string, userId: string, status: Game
     .from('game_invites')
     .update({ status, responded_at: nowIsoString() })
     .eq('id', inviteId)
-    .eq('to_profile_id', userId);
+    .eq('to_uid', userId);
 
   if (error) {
     logSupabaseError('game_invites', 'update', error, { inviteId, userId, status });

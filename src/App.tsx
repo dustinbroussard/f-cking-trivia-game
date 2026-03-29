@@ -1158,6 +1158,7 @@ export default function App() {
           foundGame: !!storedGame,
           gameStatus: storedGame?.status ?? null,
           playerIds: storedGame?.playerIds ?? [],
+          resumedGameOwnershipMatchesCurrentSession: !!storedGame && storedGame.playerIds.includes(user.id),
         });
 
         if (!storedGame) {
@@ -1190,6 +1191,7 @@ export default function App() {
           storedGameId,
           gameStatus: storedGame.status,
           playerIds: storedGame.playerIds,
+          resumedGameOwnershipMatchesCurrentSession: storedGame.playerIds.includes(user.id),
         });
         setIsSolo(storedGame.playerIds.length === 1);
         setResumePrompt({
