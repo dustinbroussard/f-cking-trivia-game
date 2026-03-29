@@ -3,6 +3,7 @@ import { GameAnswer, GameState, PersistedGameState, Player, TriviaQuestion } fro
 import {
   getGameDisplayCode,
   isMissingRowError,
+  isMissingTableError,
   isUuid,
   logSupabaseError,
   nowIsoString,
@@ -496,6 +497,7 @@ export async function getGameByCode(code: string): Promise<GameState | null> {
 }
 
 export const subscribeToMessages = (gameId: string, callback: (messages: any[]) => void) => {
+  logGameMessagesQuery('subscribeToMessages', gameId, false);
   const channel = supabase
     .channel(`messages-${gameId}`)
     .on(
@@ -534,13 +536,45 @@ export async function sendMessage(gameId: string, userId: string, content: strin
   }
 }
 
+function isGameMessagesMissingError(error: any) {
+  return (
+    isMissingTableError(error) ||
+    error?.code === '42P01' ||
+    error?.message?.includes('public.game_messages')
+  );
+}
+
+function logGameMessagesQuery(functionName: string, gameId: string, required: boolean) {
+  console.info('[Supabase] game_messages access', {
+    table: 'game_messages',
+    functionName,
+    gameId,
+    required,
+    startupCanContinueWithoutTable: !required,
+  });
+}
+
 async function loadMessages(gameId: string) {
+  logGameMessagesQuery('loadMessages', gameId, false);
   const [{ data: messages, error: messagesError }, gameRow] = await Promise.all([
     supabase.from('game_messages').select('*').eq('game_id', gameId).order('timestamp', { ascending: true }).limit(50),
     fetchGameRow(gameId),
   ]);
 
   if (messagesError) {
+    if (isGameMessagesMissingError(messagesError)) {
+      console.warn('[Supabase] game_messages unavailable; skipping message history', {
+        table: 'game_messages',
+        functionName: 'loadMessages',
+        gameId,
+        required: false,
+        startupCanContinueWithoutTable: true,
+        code: messagesError?.code ?? null,
+        message: messagesError?.message ?? String(messagesError),
+      });
+      return [];
+    }
+
     logSupabaseError('game_messages', 'select', messagesError, { gameId });
     throw messagesError;
   }
