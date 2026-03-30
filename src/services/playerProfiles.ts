@@ -18,6 +18,7 @@ import {
 
 const AVATAR_STORAGE_BUCKET = 'avatars';
 const AVATAR_STORAGE_EXTENSION = 'jpg';
+let hasLoggedMissingQuestionStatsRpc = false;
 
 function mapPostgresProfileToPlayerProfile(profile: any): PlayerProfile {
   if (!profile) {
@@ -592,11 +593,16 @@ export async function recordQuestionStats({
   }
 
   if (isMissingFunctionError(error)) {
-    console.warn('[playerProfiles] record_question_stats is not part of the canonical schema; skipping stats RPC.', {
-      uid,
-      category,
-      isCorrect,
-    });
+    if (!hasLoggedMissingQuestionStatsRpc) {
+      hasLoggedMissingQuestionStatsRpc = true;
+      console.info(
+        '[playerProfiles] Optional Supabase RPC "record_question_stats" is not available in the current backend schema; skipping question stats sync until that function exists.',
+        {
+          rpc: 'record_question_stats',
+          expectedArgs: ['p_uid', 'p_category', 'p_is_correct'],
+        }
+      );
+    }
     return;
   }
 
