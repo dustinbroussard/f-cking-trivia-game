@@ -232,7 +232,7 @@ export function subscribeRecentPlayers(
 async function loadRecentPlayers(uid: string): Promise<RecentPlayer[]> {
   const { data, error } = await supabase
     .from('recent_players')
-    .select('*')
+    .select('user_id, opponent_id, nickname, avatar_url, last_played_at, last_game_id, hidden, updated_at')
     .eq('user_id', uid)
     .eq('hidden', false)
     .order('last_played_at', { ascending: false })
@@ -253,8 +253,8 @@ async function loadRecentPlayers(uid: string): Promise<RecentPlayer[]> {
     const profile = profileMap.get(row.opponent_id);
     return {
       uid: row.opponent_id,
-      nickname: profile?.nickname || row.display_name || 'Player',
-      avatarUrl: profile?.avatar_url || row.photo_url || undefined,
+      nickname: profile?.nickname || row.nickname || 'Player',
+      avatarUrl: profile?.avatar_url || row.avatar_url || undefined,
       lastPlayedAt: row.last_played_at ? new Date(row.last_played_at).getTime() : Date.now(),
       lastGameId: row.last_game_id || undefined,
       hidden: !!row.hidden,
@@ -343,33 +343,37 @@ export async function updateRecentPlayer(
   opponentUid: string,
   patch: Record<string, unknown>
 ) {
-  const { error } = await supabase
+  const payload = {
+    user_id: uid,
+    opponent_id: opponentUid,
+    nickname:
+      typeof patch.nickname === 'string'
+        ? patch.nickname
+        : null,
+    avatar_url:
+      typeof patch.avatar_url === 'string'
+        ? patch.avatar_url
+        : null,
+    last_played_at:
+      typeof patch.last_played_at === 'string'
+        ? patch.last_played_at
+        : nowIsoString(),
+    last_game_id:
+      typeof patch.last_game_id === 'string'
+        ? patch.last_game_id
+        : null,
+    hidden: typeof patch.hidden === 'boolean' ? patch.hidden : false,
+    updated_at: nowIsoString(),
+  };
+
+  const { data, error } = await supabase
     .from('recent_players')
     .upsert(
-      {
-        user_id: uid,
-        opponent_id: opponentUid,
-        display_name:
-          typeof patch.nickname === 'string'
-            ? patch.nickname
-            : null,
-        photo_url:
-          typeof patch.avatar_url === 'string'
-            ? patch.avatar_url
-            : null,
-        last_played_at:
-          typeof patch.last_played_at === 'string'
-            ? patch.last_played_at
-            : nowIsoString(),
-        last_game_id:
-          typeof patch.last_game_id === 'string'
-            ? patch.last_game_id
-            : null,
-        hidden: typeof patch.hidden === 'boolean' ? patch.hidden : false,
-        updated_at: nowIsoString(),
-      },
+      payload,
       { onConflict: 'user_id,opponent_id' }
-    );
+    )
+    .select('user_id, opponent_id, nickname, avatar_url, last_played_at, last_game_id, hidden, updated_at')
+    .single();
 
   if (error) {
     if (isMissingTableError(error)) {
@@ -379,6 +383,14 @@ export async function updateRecentPlayer(
     logSupabaseError('recent_players', 'upsert', error, { uid, opponentUid, patchKeys: Object.keys(patch) });
     throw error;
   }
+
+  console.info('[recent_players] upsert succeeded', {
+    uid,
+    opponentUid,
+    payload,
+    returnedRow: data,
+    onConflict: 'user_id,opponent_id',
+  });
 }
 
 export async function recordQuestionStats({
