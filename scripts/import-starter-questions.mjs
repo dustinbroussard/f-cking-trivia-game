@@ -70,26 +70,25 @@ function normalizePresentation(rawQuestion) {
   const nestedPresentation = rawQuestion?.presentation && typeof rawQuestion.presentation === 'object'
     ? rawQuestion.presentation
     : {};
+  const presentation = { ...nestedPresentation };
 
-  const wrongAnswerQuips = [
-    ...(Array.isArray(nestedPresentation.wrongAnswerQuips) ? nestedPresentation.wrongAnswerQuips : []),
-    ...(Array.isArray(rawQuestion?.wrongAnswerQuips) ? rawQuestion.wrongAnswerQuips : []),
-  ]
-    .map((entry) => String(entry).trim())
-    .filter(Boolean);
+  if (presentation.hostLeadIn == null && rawQuestion?.hostLeadIn != null) {
+    presentation.hostLeadIn = rawQuestion.hostLeadIn;
+  }
 
-  return {
-    ...(nestedPresentation.hostLeadIn || rawQuestion?.hostLeadIn
-      ? { hostLeadIn: nestedPresentation.hostLeadIn || rawQuestion.hostLeadIn }
-      : {}),
-    ...(nestedPresentation.questionStyled || rawQuestion?.questionStyled
-      ? { questionStyled: nestedPresentation.questionStyled || rawQuestion.questionStyled }
-      : {}),
-    ...(nestedPresentation.explanationStyled || rawQuestion?.explanationStyled
-      ? { explanationStyled: nestedPresentation.explanationStyled || rawQuestion.explanationStyled }
-      : {}),
-    ...(wrongAnswerQuips.length > 0 ? { wrongAnswerQuips } : {}),
-  };
+  if (presentation.questionStyled == null && rawQuestion?.questionStyled != null) {
+    presentation.questionStyled = rawQuestion.questionStyled;
+  }
+
+  if (presentation.explanationStyled == null && rawQuestion?.explanationStyled != null) {
+    presentation.explanationStyled = rawQuestion.explanationStyled;
+  }
+
+  if (presentation.wrongAnswerQuips == null && rawQuestion?.wrongAnswerQuips != null) {
+    presentation.wrongAnswerQuips = rawQuestion.wrongAnswerQuips;
+  }
+
+  return presentation;
 }
 
 function normalizeQuestion(rawQuestion, createdAt) {

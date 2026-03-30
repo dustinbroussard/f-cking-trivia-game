@@ -1,0 +1,98 @@
+{
+  "questions": [
+    {
+      "id": "2787f7a7-531e-4509-9060-1e5b8004f134",
+      "category": "History",
+      "subcategory": "20th Century History",
+      "difficulty": "medium",
+      "question": "Which city was originally selected to host the 1940 Summer Olympics before forfeiting the event due to the Second Sino-Japanese War?",
+      "choices": [
+        "Tokyo",
+        "Helsinki",
+        "Rome",
+        "London"
+      ],
+      "correctIndex": 0,
+      "explanation": "Tokyo was awarded the 1940 Games but forfeited them in 1938. They were then reassigned to Helsinki before being cancelled entirely due to World War II.",
+      "tags": [
+        "Olympics",
+        "Japan"
+      ],
+      "status": "revised",
+      "presentation": {
+        "questionStyled": "Before the world went up in flames, which city was <b>originally tapped</b> to host the 1940 Summer Olympics before reality intervened?",
+        "explanationStyled": "It was indeed <b>Tokyo</b>, though they wisely forfeited in 1938. Helsinki got the hand-me-down, before the entire event was scrapped for obvious, catastrophic reasons.",
+        "hostLeadIn": "Let us see if your grasp of history is as shaky as the 1940 schedule.",
+        "wrongAnswerQuips": [
+          "A charming thought, but absolutely incorrect.",
+          "Helsinki was merely the backup plan, try harder.",
+          "Rome? You are clearly lost in the wrong century.",
+          "London wasn't even in the running for that disaster."
+        ]
+      },
+      "sourceType": "ai"
+    },
+    {
+      "id": "36d2e46c-7e61-4607-b364-77e8a38546b5",
+      "category": "Pop Culture",
+      "subcategory": "Film History",
+      "difficulty": "hard",
+      "question": "Which 1984 science fiction film was the first to use integrated computer-generated imagery (CGI) for all of its space combat scenes instead of physical models?",
+      "choices": [
+        "The Last Starfighter",
+        "Tron",
+        "Starman",
+        "Dune"
+      ],
+      "correctIndex": 0,
+      "explanation": "The Last Starfighter was a pioneer in cinema for using digital renders from a Cray X-MP supercomputer to replace traditional scale models for its space sequences.",
+      "tags": [
+        "CGI",
+        "Cinema"
+      ],
+      "status": "approved",
+      "presentation": {
+        "questionStyled": "Which 1984 sci-fi flick <b>ditched physical models</b> for digital trickery, marking the first time computers handled the heavy lifting for space combat?",
+        "explanationStyled": "The answer is <b>The Last Starfighter</b>. It leaned on a Cray X-MP supercomputer to prove that physical models were quickly becoming a relic of the past.",
+        "hostLeadIn": "Time to test your knowledge of vintage digital pioneers, assuming you can recall anything.",
+        "wrongAnswerQuips": [
+          "Tron? Everyone always guesses Tron. How predictable.",
+          "Starman? That is just a lovely piece of fiction.",
+          "Dune. A noble guess, but entirely wrong."
+        ]
+      },
+      "sourceType": "ai"
+    },
+    {
+      "id": "71337e72-132d-4536-a149-93e155c829e1",
+      "category": "Pop Culture",
+      "subcategory": "Music",
+      "difficulty": "medium",
+      "question": "Despite their global success in the disco era and their Caribbean-inspired sound, the group Boney M. was formed in which country?",
+      "choices": [
+        "Jamaica",
+        "United Kingdom",
+        "West Germany",
+        "Netherlands"
+      ],
+      "correctIndex": 2,
+      "explanation": "Boney M. was created by German record producer Frank Farian in 1975 and was based in West Germany throughout its peak success.",
+      "tags": [
+        "Disco",
+        "Music History"
+      ],
+      "status": "approved",
+      "presentation": {
+        "questionStyled": "Despite that tropical vibe, Boney M. was <b>not</b> exactly island-born. In which country was this disco outfit actually formed?",
+        "explanationStyled": "The group was the brainchild of German producer Frank Farian in 1975, basing the entire operation in <b>West Germany</b>. Sorry to burst your sunny bubble.",
+        "hostLeadIn": "Surely you haven't been fooled by a little disco aesthetic, have you?",
+        "wrongAnswerQuips": [
+          "Common sense is clearly not your strong suit today.",
+          "The UK? You really don't pay attention, do you?",
+          "Netherlands? A valiant effort at guessing, but no."
+        ]
+      },
+      "sourceType": "ai"
+    }
+  ]
+}

@@ -37,7 +37,13 @@ import { TrashTalkOverlay } from './components/TrashTalkOverlay';
 import { HeckleOverlay } from './components/HeckleOverlay';
 import { ConfirmModal } from './components/ConfirmModal';
 import { CategoryReveal } from './components/CategoryReveal';
-import { HECKLE_ROTATION_MS, shouldEnableHeckles } from './content/heckles';
+import {
+  HECKLE_PROLONGED_WAIT_MS,
+  HECKLE_REQUEST_COOLDOWN_MS,
+  HECKLE_ROTATION_MS,
+  shouldEnableHeckles,
+  type HeckleTriggerReason,
+} from './content/heckles';
 import { getTrashTalkLine, TrashTalkEvent } from './content/trashTalk';
 import { publicAsset } from './assets';
 import { motion, AnimatePresence } from 'motion/react';
@@ -71,6 +77,13 @@ type LoadingStep =
   | 'finalizing_lobby'
   | 'finalizing_match'
   | 'finalizing_round';
+
+interface PendingHeckleTrigger {
+  reason: HeckleTriggerReason;
+  dedupeKey: string;
+  summary: string;
+  requestedAt: number;
+}
 
 const SettingsModal = lazy(() => import('./components/SettingsModal').then((module) => ({ default: module.SettingsModal })));
 const QuestionBankAdmin = lazy(() => import('./components/QuestionBankAdmin').then((module) => ({ default: module.QuestionBankAdmin })));
@@ -220,6 +233,7 @@ export default function App() {
   const [activeHeckle, setActiveHeckle] = useState<string | null>(null);
   const [showHeckle, setShowHeckle] = useState(false);
   const [heckleQueue, setHeckleQueue] = useState<string[]>([]);
+  const [pendingHeckleTrigger, setPendingHeckleTrigger] = useState<PendingHeckleTrigger | null>(null);
   const [confirmAction, setConfirmAction] = useState<'quit' | 'signout' | null>(null);
   const [shouldBlurQuestionBackground, setShouldBlurQuestionBackground] = useState(false);
   const [resumePrompt, setResumePrompt] = useState<ResumePromptState | null>(null);
@@ -236,6 +250,7 @@ export default function App() {
   const questionResolvedRef = useRef(false);
   const resolvedQuestionIdRef = useRef<string | null>(null);
   const heckleTimer = useRef<number | null>(null);
+  const prolongedWaitTimerRef = useRef<number | null>(null);
   const prevPlayersRef = useRef<Player[]>([]);
   const hasWarnedBehindRef = useRef(false);
   const hasTriggeredMatchLossRef = useRef(false);
@@ -243,8 +258,23 @@ export default function App() {
   const recordedRecentPairKeysRef = useRef<Set<string>>(new Set());
   const lastTurnNotificationKeyRef = useRef<string>('');
   const lastFailureRef = useRef<string>('No recent embarrassment recorded.');
-  const lastHeckleTurnKeyRef = useRef<string>('');
+  const lastHeckleQuestionContextRef = useRef<{
+    question: string;
+    category: string;
+    difficulty: string;
+    playerMissed: boolean;
+  } | null>(null);
+  const lastHeckleWaitStateKeyRef = useRef<string>('');
   const heckleRequestIdRef = useRef(0);
+  const heckleRequestInFlightRef = useRef<null | { requestId: number; waitStateKey: string }>(null);
+  const lastHeckleRequestAtRef = useRef(0);
+  const currentWaitingStateKeyRef = useRef<string | null>(null);
+  const waitingStateEnteredAtRef = useRef<number | null>(null);
+  const lastHeckleEligibilityLogRef = useRef<string>('');
+  const latestHeckleEligibilityRef = useRef<{ allowed: boolean; reason: string }>({
+    allowed: false,
+    reason: 'uninitialized',
+  });
   const welcomeAudioSrcRef = useRef(
     Math.random() < 0.5 ? publicAsset('welcome1.mp3') : publicAsset('welcome2.mp3')
   );
@@ -625,9 +655,50 @@ export default function App() {
       heckleTimer.current = null;
     }
 
+    if (prolongedWaitTimerRef.current) {
+      window.clearTimeout(prolongedWaitTimerRef.current);
+      prolongedWaitTimerRef.current = null;
+    }
+
     setActiveHeckle(null);
     setShowHeckle(false);
     setHeckleQueue([]);
+  };
+
+  const getHeckleTriggerPriority = (reason: HeckleTriggerReason) => {
+    if (reason === 'wrong_answer' || reason === 'round_loss') return 3;
+    if (reason === 'score_deficit') return 2;
+    return 1;
+  };
+
+  const queueHeckleTrigger = (reason: HeckleTriggerReason, dedupeKey: string, summary: string) => {
+    const nextTrigger: PendingHeckleTrigger = {
+      reason,
+      dedupeKey,
+      summary,
+      requestedAt: Date.now(),
+    };
+
+    setPendingHeckleTrigger((current) => {
+      if (current?.dedupeKey === dedupeKey) {
+        console.info('[heckles] Trigger skipped: duplicate event key', nextTrigger);
+        return current;
+      }
+
+      if (!current || getHeckleTriggerPriority(reason) >= getHeckleTriggerPriority(current.reason)) {
+        console.info('[heckles] Trigger queued', {
+          nextTrigger,
+          replacedTrigger: current,
+        });
+        return nextTrigger;
+      }
+
+      console.info('[heckles] Trigger skipped: lower priority than pending trigger', {
+        nextTrigger,
+        pendingTrigger: current,
+      });
+      return current;
+    });
   };
 
   const clearQuestionTimer = () => {
@@ -731,6 +802,14 @@ export default function App() {
     markSeen(currentQuestion.id);
   }, [currentQuestion?.id, user?.id, game?.id]);
 
+  const shouldShowCurrentTurnStage = !!game && game.status === 'active' && (
+    game.currentTurn === user?.id ||
+    !!currentQuestion ||
+    !!revealedCategory ||
+    resultPhase === 'revealing' ||
+    resultPhase === 'explaining' ||
+    !!roast
+  );
 
   const isHighPriorityOverlayActive =
     resultPhase !== 'idle' ||
@@ -740,7 +819,18 @@ export default function App() {
     showManualPickPrompt ||
     game?.status === 'completed';
 
-  const shouldShowOpponentHeckles =
+  const currentPlayer = players.find((player) => player.uid === user?.id);
+  const opponentPlayer = players.find((player) => player.uid !== user?.id);
+  const currentPlayerScore = currentPlayer?.score || 0;
+  const opponentPlayerScore = opponentPlayer?.score || 0;
+  const scoreDelta = currentPlayerScore - opponentPlayerScore;
+  const isBlockingHeckleModalOpen =
+    !!confirmAction ||
+    showSettings ||
+    showHistory ||
+    !!resumePrompt ||
+    isMobileChatOpen;
+  const isWaitingForOpponent =
     shouldEnableHeckles(isSolo) &&
     settings.commentaryEnabled &&
     !!game &&
@@ -749,8 +839,51 @@ export default function App() {
     players.length > 1 &&
     game.currentTurn !== user.id &&
     !currentQuestion &&
-    !revealedCategory &&
-    !isHighPriorityOverlayActive;
+    !revealedCategory;
+  const heckleWaitStateKey =
+    isWaitingForOpponent && game && user
+      ? `${game.id}:${game.status}:${game.currentTurn}:${user.id}:${currentPlayerScore}:${opponentPlayerScore}`
+      : null;
+  const heckleEligibility = (() => {
+    if (!settings.commentaryEnabled) {
+      return { allowed: false, reason: 'commentary_disabled' };
+    }
+    if (isSolo) {
+      return { allowed: false, reason: 'solo_mode' };
+    }
+    if (!game || !user) {
+      return { allowed: false, reason: 'missing_game_or_user' };
+    }
+    if (game.status !== 'active') {
+      return { allowed: false, reason: `game_status_${game.status}` };
+    }
+    if (players.length < 2) {
+      return { allowed: false, reason: 'not_multiplayer' };
+    }
+    if (game.currentTurn === user.id) {
+      return { allowed: false, reason: 'current_player_can_act' };
+    }
+    if (currentQuestion) {
+      return { allowed: false, reason: 'question_input_expected' };
+    }
+    if (revealedCategory) {
+      return { allowed: false, reason: 'category_reveal_active' };
+    }
+    if (isHighPriorityOverlayActive) {
+      return { allowed: false, reason: 'critical_transition_active' };
+    }
+    if (isBlockingHeckleModalOpen) {
+      return { allowed: false, reason: 'modal_or_sheet_open' };
+    }
+    if (!currentPlayer || !opponentPlayer) {
+      return { allowed: false, reason: 'missing_player_context' };
+    }
+    if (heckleRequestInFlightRef.current) {
+      return { allowed: false, reason: 'request_in_flight' };
+    }
+    return { allowed: true, reason: 'eligible_waiting_state' };
+  })();
+  const shouldShowOpponentHeckles = heckleEligibility.allowed;
 
   const showCategoryReveal = (category: string, question: TriviaQuestion, questionIndex: number) => {
     if (categoryRevealTimeoutRef.current) {
@@ -827,10 +960,106 @@ export default function App() {
   }, [currentQuestion, selectedAnswer, resultPhase]);
 
   useEffect(() => {
+    latestHeckleEligibilityRef.current = {
+      allowed: heckleEligibility.allowed,
+      reason: heckleEligibility.reason,
+    };
+
+    const logSignature = JSON.stringify({
+      allowed: heckleEligibility.allowed,
+      reason: heckleEligibility.reason,
+      waitStateKey: heckleWaitStateKey,
+      pendingTrigger: pendingHeckleTrigger?.reason ?? null,
+      hasQueue: heckleQueue.length > 0,
+      activeHeckle: !!activeHeckle,
+    });
+
+    if (lastHeckleEligibilityLogRef.current === logSignature) return;
+    lastHeckleEligibilityLogRef.current = logSignature;
+
+    console.info('[heckles] Eligibility evaluated', {
+      allowed: heckleEligibility.allowed,
+      reason: heckleEligibility.reason,
+      waitStateKey: heckleWaitStateKey,
+      trigger: pendingHeckleTrigger?.reason ?? null,
+      multiplayerActive: !isSolo,
+      waitingForOpponent: isWaitingForOpponent,
+      currentTurn: game?.currentTurn ?? null,
+      userId: user?.id ?? null,
+      currentQuestionId: currentQuestion?.id ?? null,
+      resultPhase,
+      roastVisible: !!roast,
+      activeTrashTalkEvent,
+      confirmAction,
+      showSettings,
+      showHistory,
+      isMobileChatOpen,
+      requestInFlight: !!heckleRequestInFlightRef.current,
+      existingHeckleShown: !!activeHeckle,
+      queuedHeckles: heckleQueue.length,
+    });
+  }, [
+    heckleEligibility.allowed,
+    heckleEligibility.reason,
+    heckleWaitStateKey,
+    pendingHeckleTrigger?.reason,
+    heckleQueue.length,
+    activeHeckle,
+    isSolo,
+    isWaitingForOpponent,
+    game?.currentTurn,
+    user?.id,
+    currentQuestion?.id,
+    resultPhase,
+    roast,
+    activeTrashTalkEvent,
+    confirmAction,
+    showSettings,
+    showHistory,
+    isMobileChatOpen,
+  ]);
+
+  useEffect(() => {
+    if (currentWaitingStateKeyRef.current !== heckleWaitStateKey) {
+      currentWaitingStateKeyRef.current = heckleWaitStateKey;
+      waitingStateEnteredAtRef.current = heckleWaitStateKey ? Date.now() : null;
+    }
+
     if (shouldShowOpponentHeckles) return;
     heckleRequestIdRef.current += 1;
+    heckleRequestInFlightRef.current = null;
     clearHeckles();
   }, [shouldShowOpponentHeckles]);
+
+  useEffect(() => {
+    if (prolongedWaitTimerRef.current) {
+      window.clearTimeout(prolongedWaitTimerRef.current);
+      prolongedWaitTimerRef.current = null;
+    }
+
+    if (!heckleWaitStateKey || !shouldShowOpponentHeckles || lastHeckleWaitStateKeyRef.current === heckleWaitStateKey) {
+      return;
+    }
+
+    prolongedWaitTimerRef.current = window.setTimeout(() => {
+      const waitingMs = waitingStateEnteredAtRef.current
+        ? Date.now() - waitingStateEnteredAtRef.current
+        : HECKLE_PROLONGED_WAIT_MS;
+      queueHeckleTrigger(
+        'prolonged_wait',
+        `${heckleWaitStateKey}:prolonged_wait`,
+        `Player has been waiting on the opponent for ${Math.round(waitingMs / 1000)} seconds.`
+      );
+      prolongedWaitTimerRef.current = null;
+    }, HECKLE_PROLONGED_WAIT_MS);
+
+    return () => {
+      if (prolongedWaitTimerRef.current) {
+        window.clearTimeout(prolongedWaitTimerRef.current);
+        prolongedWaitTimerRef.current = null;
+      }
+    };
+  }, [heckleWaitStateKey, shouldShowOpponentHeckles]);
 
   useEffect(() => {
     if (!shouldShowOpponentHeckles || activeHeckle || heckleQueue.length === 0) {
@@ -858,30 +1087,143 @@ export default function App() {
   }, [shouldShowOpponentHeckles, activeHeckle, heckleQueue]);
 
   useEffect(() => {
-    if (!shouldShowOpponentHeckles || activeHeckle || heckleQueue.length > 0) return;
+    if (!pendingHeckleTrigger || !shouldShowOpponentHeckles || activeHeckle || heckleQueue.length > 0) return;
+    if (!heckleWaitStateKey || !game || !user || !currentPlayer || !opponentPlayer) return;
 
-    const opponent = players.find((player) => player.uid !== user?.id);
-    const currentPlayer = players.find((player) => player.uid === user?.id);
-    if (!opponent || !user || !game) return;
+    if (lastHeckleWaitStateKeyRef.current === heckleWaitStateKey) {
+      console.info('[heckles] Request skipped: wait state already heckled', {
+        waitStateKey: heckleWaitStateKey,
+        trigger: pendingHeckleTrigger,
+      });
+      setPendingHeckleTrigger(null);
+      return;
+    }
 
-    const turnKey = `${game.id}:${game.currentTurn}:${currentPlayer?.score ?? 0}:${opponent.score ?? 0}:${opponent.streak ?? 0}`;
-    if (lastHeckleTurnKeyRef.current === turnKey) return;
-    lastHeckleTurnKeyRef.current = turnKey;
+    const now = Date.now();
+    if (now - lastHeckleRequestAtRef.current < HECKLE_REQUEST_COOLDOWN_MS) {
+      console.info('[heckles] Request skipped: cooldown active', {
+        waitStateKey: heckleWaitStateKey,
+        trigger: pendingHeckleTrigger,
+        msRemaining: HECKLE_REQUEST_COOLDOWN_MS - (now - lastHeckleRequestAtRef.current),
+      });
+      setPendingHeckleTrigger(null);
+      return;
+    }
 
     const requestId = ++heckleRequestIdRef.current;
-
-    generateHeckles({
-      playerName: currentPlayer?.name || playerProfile?.nickname || user?.email || 'Player',
-      opponentName: opponent.name,
-      gameState: `${currentPlayer?.name || 'You'} score ${currentPlayer?.score || 0}, streak ${currentPlayer?.streak || 0}; ${opponent.name} score ${opponent.score || 0}, streak ${opponent.streak || 0}.`,
+    const lastQuestionContext = lastHeckleQuestionContextRef.current;
+    const requestPayload = {
+      playerName: currentPlayer.name || playerProfile?.nickname || user.email || 'Player',
+      opponentName: opponentPlayer.name,
+      trigger: pendingHeckleTrigger.reason,
+      waitingReason: `Waiting for ${opponentPlayer.name} to finish their turn.`,
+      playerScore: currentPlayerScore,
+      opponentScore: opponentPlayerScore,
+      scoreDelta,
+      recentPerformanceSummary: `${currentPlayer.name || 'You'}: ${currentPlayerScore} points, streak ${currentPlayer.streak || 0}. ${opponentPlayer.name}: ${opponentPlayerScore} points, streak ${opponentPlayer.streak || 0}.`,
+      lastQuestion: lastQuestionContext?.question,
+      playerMissedLastQuestion: lastQuestionContext?.playerMissed ?? false,
+      category: lastQuestionContext?.category,
+      difficulty: lastQuestionContext?.difficulty,
       recentFailure: lastFailureRef.current,
       isSolo,
-    }).then((generatedHeckles) => {
-      if (requestId !== heckleRequestIdRef.current) return;
-      if (!generatedHeckles.length || !shouldShowOpponentHeckles) return;
-      setHeckleQueue(generatedHeckles);
+    };
+
+    heckleRequestInFlightRef.current = { requestId, waitStateKey: heckleWaitStateKey };
+    lastHeckleRequestAtRef.current = now;
+    lastHeckleWaitStateKeyRef.current = heckleWaitStateKey;
+    setPendingHeckleTrigger(null);
+
+    console.info('[heckles] Request allowed', {
+      waitStateKey: heckleWaitStateKey,
+      requestId,
+      trigger: pendingHeckleTrigger,
+      payloadSummary: {
+        playerName: requestPayload.playerName,
+        opponentName: requestPayload.opponentName,
+        trigger: requestPayload.trigger,
+        playerScore: requestPayload.playerScore,
+        opponentScore: requestPayload.opponentScore,
+        scoreDelta: requestPayload.scoreDelta,
+        category: requestPayload.category ?? null,
+        difficulty: requestPayload.difficulty ?? null,
+        playerMissedLastQuestion: requestPayload.playerMissedLastQuestion,
+      },
     });
-  }, [shouldShowOpponentHeckles, activeHeckle, heckleQueue.length, players, user, game, isSolo]);
+
+    generateHeckles(requestPayload)
+      .then((generatedHeckles) => {
+        const requestStillActive =
+          heckleRequestInFlightRef.current?.requestId === requestId &&
+          heckleRequestInFlightRef.current?.waitStateKey === heckleWaitStateKey;
+
+        if (!requestStillActive || requestId !== heckleRequestIdRef.current) {
+          console.info('[heckles] Response discarded: superseded request', {
+            requestId,
+            waitStateKey: heckleWaitStateKey,
+          });
+          return;
+        }
+
+        if (!generatedHeckles.length) {
+          console.info('[heckles] Response returned no heckles', {
+            requestId,
+            waitStateKey: heckleWaitStateKey,
+          });
+          return;
+        }
+
+        const latestEligibility = latestHeckleEligibilityRef.current;
+        const waitStateStillEligible =
+          currentWaitingStateKeyRef.current === heckleWaitStateKey &&
+          latestEligibility.allowed;
+
+        if (!waitStateStillEligible) {
+          console.info('[heckles] Response discarded because waiting ended', {
+            requestId,
+            waitStateKey: heckleWaitStateKey,
+            currentWaitStateKey: currentWaitingStateKeyRef.current,
+            eligibilityReason: latestEligibility.reason,
+          });
+          return;
+        }
+
+        console.info('[heckles] Response accepted', {
+          requestId,
+          waitStateKey: heckleWaitStateKey,
+          returnedCount: generatedHeckles.length,
+        });
+        setHeckleQueue(generatedHeckles);
+      })
+      .catch((error) => {
+        console.error('[heckles] Request failed', {
+          requestId,
+          waitStateKey: heckleWaitStateKey,
+          error,
+        });
+      })
+      .finally(() => {
+        if (heckleRequestInFlightRef.current?.requestId === requestId) {
+          heckleRequestInFlightRef.current = null;
+        }
+      });
+  }, [
+    pendingHeckleTrigger,
+    shouldShowOpponentHeckles,
+    activeHeckle,
+    heckleQueue.length,
+    heckleWaitStateKey,
+    game,
+    user,
+    currentPlayer,
+    opponentPlayer,
+    playerProfile?.nickname,
+    user?.email,
+    currentPlayerScore,
+    opponentPlayerScore,
+    scoreDelta,
+    isSolo,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -889,6 +1231,11 @@ export default function App() {
         window.clearTimeout(heckleTimer.current);
         heckleTimer.current = null;
       }
+      if (prolongedWaitTimerRef.current) {
+        window.clearTimeout(prolongedWaitTimerRef.current);
+        prolongedWaitTimerRef.current = null;
+      }
+      heckleRequestInFlightRef.current = null;
       heckleRequestIdRef.current += 1;
     };
   }, []);
@@ -1376,6 +1723,7 @@ export default function App() {
     setActiveTrashTalk(null);
     setActiveTrashTalkEvent(null);
     setQueuedSpecialEvent((current) => current?.kind === 'TRASH_TALK' ? null : current);
+    setPendingHeckleTrigger(null);
   }, [settings.commentaryEnabled]);
 
 
@@ -1531,6 +1879,11 @@ export default function App() {
       if (scoreGap >= 3 && !hasWarnedBehindRef.current) {
         hasWarnedBehindRef.current = true;
         triggerTrashTalk('PLAYER_FALLING_BEHIND');
+        queueHeckleTrigger(
+          'score_deficit',
+          `${game.id}:${currentPlayer.uid}:score_deficit:${scoreGap}`,
+          `${currentPlayer.name} fell behind by ${scoreGap} points while waiting on ${opponent.name}.`
+        );
       } else if (scoreGap < 3) {
         hasWarnedBehindRef.current = false;
       }
@@ -2070,6 +2423,12 @@ export default function App() {
     const isCorrect = resolvedIndex === currentQuestion.correctIndex;
     const selectedChoice = resolvedIndex >= 0 ? currentQuestion.choices[resolvedIndex] : 'No answer before the timer expired';
     const correctChoice = currentQuestion.choices[currentQuestion.correctIndex];
+    lastHeckleQuestionContextRef.current = {
+      question: currentQuestion.question,
+      category: currentQuestion.category,
+      difficulty: currentQuestion.difficulty,
+      playerMissed: !isCorrect,
+    };
 
     if (sfxEnabled) {
       if (isCorrect) {
@@ -2187,6 +2546,13 @@ export default function App() {
         lastFailureRef.current = resolvedIndex >= 0
           ? `Missed "${currentQuestion.question}" in ${currentQuestion.category}. Picked "${selectedChoice}" when the correct answer was "${correctChoice}". ${currentQuestion.explanation}`
           : `Ran out of time on "${currentQuestion.question}" in ${currentQuestion.category}. The correct answer was "${correctChoice}". ${currentQuestion.explanation}`;
+        queueHeckleTrigger(
+          resolvedIndex >= 0 ? 'wrong_answer' : 'round_loss',
+          `${game.id}:${questionId}:${resolvedIndex >= 0 ? 'wrong_answer' : 'round_loss'}`,
+          resolvedIndex >= 0
+            ? `Player missed ${currentQuestion.category} question and turn is handing to the opponent.`
+            : `Player timed out in ${currentQuestion.category} and lost the round tempo.`
+        );
         
         const updatedPlayers = players.map(p => {
           if (p.uid === user.id) return { ...p, streak: 0 };
@@ -2256,19 +2622,6 @@ export default function App() {
     continueAfterExplanation();
   };
 
-  const shouldShowCurrentTurnStage = !!game && game.status === 'active' && (
-    game.currentTurn === user?.id ||
-    !!currentQuestion ||
-    !!revealedCategory ||
-    resultPhase === 'revealing' ||
-    resultPhase === 'explaining' ||
-    !!roast
-  );
-
-  const currentPlayer = players.find((player) => player.uid === user?.id);
-  const opponentPlayer = players.find((player) => player.uid !== user?.id);
-  const currentPlayerScore = currentPlayer?.score || 0;
-  const opponentPlayerScore = opponentPlayer?.score || 0;
   const chatTitleRotationSeed = currentPlayerScore + opponentPlayerScore + messages.length;
 
   const getMatchChatTitle = () => {
@@ -2445,10 +2798,15 @@ export default function App() {
     setActiveTrashTalkEvent(null);
     setLastTrashTalkEvent(null);
     clearHeckles();
+    setPendingHeckleTrigger(null);
     prevPlayersRef.current = [];
     recordedRecentPairKeysRef.current.clear();
     lastTurnNotificationKeyRef.current = '';
-    lastHeckleTurnKeyRef.current = '';
+    lastHeckleQuestionContextRef.current = null;
+    lastHeckleWaitStateKeyRef.current = '';
+    currentWaitingStateKeyRef.current = null;
+    heckleRequestInFlightRef.current = null;
+    lastHeckleRequestAtRef.current = 0;
     heckleRequestIdRef.current += 1;
     lastFailureRef.current = 'No recent embarrassment recorded.';
     hasWarnedBehindRef.current = false;
@@ -2505,10 +2863,15 @@ export default function App() {
       setActiveTrashTalkEvent(null);
       setLastTrashTalkEvent(null);
       clearHeckles();
+      setPendingHeckleTrigger(null);
       prevPlayersRef.current = [];
       recordedRecentPairKeysRef.current.clear();
       lastTurnNotificationKeyRef.current = '';
-      lastHeckleTurnKeyRef.current = '';
+      lastHeckleQuestionContextRef.current = null;
+      lastHeckleWaitStateKeyRef.current = '';
+      currentWaitingStateKeyRef.current = null;
+      heckleRequestInFlightRef.current = null;
+      lastHeckleRequestAtRef.current = 0;
       heckleRequestIdRef.current += 1;
       lastFailureRef.current = 'No recent embarrassment recorded.';
       hasWarnedBehindRef.current = false;
