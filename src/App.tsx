@@ -47,7 +47,7 @@ import {
 import { getTrashTalkLine, TrashTalkEvent, type TrashTalkGenerationContext } from './content/trashTalk';
 import { publicAsset } from './assets';
 import { motion, AnimatePresence } from 'motion/react';
-import { Chrome, LogOut, RefreshCcw, Trophy, ArrowLeft, Volume2, VolumeX, Send, Loader2, History, X, Sun, Moon, SlidersHorizontal, Mail, Copy, Check, Pencil } from 'lucide-react';
+import { LogOut, RefreshCcw, Trophy, ArrowLeft, Volume2, VolumeX, Send, Loader2, History, X, Sun, Moon, SlidersHorizontal, Mail, Copy, Check, Pencil } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { DEFAULT_USER_SETTINGS, getLocalSettings, loadUserSettings, mergeSettings, saveLocalSettings, saveUserSettings } from './services/userSettings';
 import { generateHeckles, generateTrashTalk } from './services/gemini';
@@ -185,6 +185,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authLoadingMode, setAuthLoadingMode] = useState<'magic-link' | 'google' | null>(null);
   const [isMagicLinkSent, setIsMagicLinkSent] = useState(false);
+  const [showEmailSignIn, setShowEmailSignIn] = useState(false);
   const [nickname, setNickname] = useState('');
   const [isSavingNickname, setIsSavingNickname] = useState(false);
   const [isEditingNickname, setIsEditingNickname] = useState(false);
@@ -2029,6 +2030,11 @@ export default function App() {
     }
   };
 
+  const handleShowEmailSignIn = () => {
+    setError(null);
+    setShowEmailSignIn(true);
+  };
+
   const handleSaveNickname = async () => {
     if (!user || !sanitizeNicknameInput(nickname) || isSavingNickname) return;
     setIsSavingNickname(true);
@@ -3175,7 +3181,7 @@ export default function App() {
                       Sign In Instantly
                     </h3>
                     <p className="text-sm theme-text-muted">
-                      Use Google or get a magic link by email. No password needed.
+                      Continue with Google for the fastest way in.
                     </p>
                   </div>
 
@@ -3184,49 +3190,66 @@ export default function App() {
                       type="button"
                       onClick={() => void handleGoogleSignIn()}
                       disabled={authLoading}
-                      className="w-full h-14 flex items-center justify-center gap-3 rounded-2xl theme-panel border font-black uppercase tracking-widest transition-all active:scale-95 disabled:opacity-50"
+                      className="group w-full h-14 flex items-center justify-center gap-3 rounded-2xl border bg-white text-[#1f1f1f] font-bold tracking-[0.01em] transition-all active:scale-[0.99] disabled:opacity-50 shadow-[0_10px_30px_rgba(0,0,0,0.16)] hover:shadow-[0_14px_36px_rgba(0,0,0,0.2)]"
+                      style={{ borderColor: 'rgba(0,0,0,0.12)' }}
                     >
                       {authLoading && authLoadingMode === 'google' ? (
-                        <Loader2 className="w-6 h-6 animate-spin" />
+                        <Loader2 className="w-5 h-5 animate-spin" />
                       ) : (
                         <>
-                          <Chrome className="w-5 h-5" />
-                          <span>Continue with Google</span>
+                          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-[inset_0_0_0_1px_rgba(0,0,0,0.08)]">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4.5 w-4.5">
+                              <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.24 1.26-.96 2.32-2.04 3.03l3.3 2.56c1.92-1.77 3.03-4.38 3.03-7.48 0-.71-.06-1.4-.18-2.06H12z" />
+                              <path fill="#34A853" d="M12 22c2.7 0 4.96-.9 6.62-2.43l-3.3-2.56c-.91.61-2.08.97-3.32.97-2.55 0-4.72-1.72-5.49-4.03l-3.41 2.63A9.99 9.99 0 0 0 12 22z" />
+                              <path fill="#4A90E2" d="M3.59 14.55A9.98 9.98 0 0 1 3 11.99c0-.89.15-1.75.41-2.55L0 6.82A10 10 0 0 0 0 17.18l3.59-2.63z" />
+                              <path fill="#FBBC05" d="M12 4.02c1.47 0 2.8.51 3.84 1.52l2.88-2.88C16.95 1.03 14.7 0 12 0 8.09 0 4.73 2.24 3.1 5.5l3.41 2.64C7.28 5.75 9.45 4.02 12 4.02z" />
+                            </svg>
+                          </span>
+                          <span className="text-[0.95rem]">Sign in with Google</span>
                         </>
                       )}
                     </button>
 
-                    <div className="flex items-center gap-3">
-                      <div className="h-px flex-1 bg-white/10" />
-                      <span className="text-[10px] font-black uppercase tracking-[0.28em] theme-text-muted">or</span>
-                      <div className="h-px flex-1 bg-white/10" />
-                    </div>
+                    {showEmailSignIn ? (
+                      <div className="space-y-4 rounded-2xl theme-panel border p-4">
+                        <div className="relative group">
+                          <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 theme-text-muted group-focus-within:text-pink-500 transition-colors" />
+                          <input
+                            type="email"
+                            placeholder="your@email.com"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSendMagicLink()}
+                            className="w-full h-14 pl-12 pr-4 rounded-2xl theme-panel border bg-transparent focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all text-base theme-inset"
+                            autoComplete="email"
+                          />
+                        </div>
 
-                    <div className="relative group">
-                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 theme-text-muted group-focus-within:text-pink-500 transition-colors" />
-                      <input
-                        type="email"
-                        placeholder="your@email.com"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSendMagicLink()}
-                        className="w-full h-14 pl-12 pr-4 rounded-2xl theme-panel border bg-transparent focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all text-base theme-inset"
-                        autoComplete="email"
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={handleSendMagicLink}
-                      disabled={authLoading}
-                      className="w-full h-14 flex items-center justify-center rounded-2xl bg-pink-600 text-white font-black uppercase tracking-widest hover:bg-pink-500 transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-pink-900/20"
-                    >
-                      {authLoading && authLoadingMode === 'magic-link' ? (
-                        <Loader2 className="w-6 h-6 animate-spin" />
-                      ) : (
-                        'Send Login Link'
-                      )}
-                    </button>
+                        <button
+                          type="button"
+                          onClick={handleSendMagicLink}
+                          disabled={authLoading}
+                          className="w-full h-14 flex items-center justify-center rounded-2xl bg-pink-600 text-white font-black uppercase tracking-widest hover:bg-pink-500 transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-pink-900/20"
+                        >
+                          {authLoading && authLoadingMode === 'magic-link' ? (
+                            <Loader2 className="w-6 h-6 animate-spin" />
+                          ) : (
+                            'Send Login Link'
+                          )}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <button
+                          type="button"
+                          onClick={handleShowEmailSignIn}
+                          disabled={authLoading}
+                          className="text-xs font-bold uppercase tracking-[0.22em] theme-text-muted transition-colors hover:text-pink-500 disabled:opacity-50"
+                        >
+                          Prefer email instead?
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   {error && (
