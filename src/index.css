@@ -39,7 +39,7 @@
   --wheel-random-icon: #fafafa;
   --wheel-center: #09090b;
   --wheel-center-stroke: rgba(255, 255, 255, 0.1);
-  --wheel-pointer: #f472b6;
+  --wheel-pointer: #d4d4d8;
 }
 
 [data-theme="light"] {
@@ -73,7 +73,7 @@
   --wheel-random-icon: #18181b;
   --wheel-center: #18181b;
   --wheel-center-stroke: rgba(255, 255, 255, 0.1);
-  --wheel-pointer: #ec4899;
+  --wheel-pointer: #a1a1aa;
 }
 
 html,

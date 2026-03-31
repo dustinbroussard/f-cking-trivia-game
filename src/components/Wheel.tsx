@@ -147,17 +147,10 @@ export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsS
       </div>
 
       <div className="absolute left-1/2 bottom-0 -translate-x-1/2 flex flex-col items-center pointer-events-none">
-        <motion.div
-          animate={isSpinning ? { y: [0, 4, 0], scale: [1, 1.05, 1] } : { y: 0, scale: 1 }}
-          transition={isSpinning ? { duration: 0.5, repeat: Infinity, ease: 'easeInOut' } : { duration: 0.2 }}
-          className="relative flex flex-col items-center"
-        >
-          <div className="h-11 w-1 rounded-full bg-gradient-to-b from-fuchsia-300/70 via-fuchsia-400/55 to-fuchsia-500/0 shadow-[0_0_18px_rgba(217,70,239,0.28)]" />
-          <div
-            className="h-0 w-0 border-l-[18px] border-r-[18px] border-b-[26px] border-l-transparent border-r-transparent drop-shadow-[0_6px_14px_rgba(0,0,0,0.32)]"
-            style={{ borderBottomColor: 'var(--wheel-pointer)' }}
-          />
-        </motion.div>
+        <div
+          className="h-0 w-0 border-l-[18px] border-r-[18px] border-b-[26px] border-l-transparent border-r-transparent drop-shadow-[0_6px_14px_rgba(0,0,0,0.28)]"
+          style={{ borderBottomColor: 'var(--wheel-pointer)' }}
+        />
       </div>
     </div>
   );
