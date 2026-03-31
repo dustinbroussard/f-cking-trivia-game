@@ -54,6 +54,44 @@ function buildStatsSummary(input?: Partial<PlayerProfile['stats']>): NonNullable
   };
 }
 
+async function loadMultiplayerGameStats(uid: string) {
+  const baseQuery = () =>
+    supabase
+      .from('games')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'completed')
+      .eq('game_mode', 'multiplayer')
+      .contains('player_ids', [uid]);
+
+  const [{ count: completedGames, error: completedError }, { count: wins, error: winsError }] = await Promise.all([
+    baseQuery(),
+    baseQuery().eq('winner_user_id', uid),
+  ]);
+
+  if (completedError && !isMissingTableError(completedError)) {
+    logSupabaseError('games', 'select', completedError, { uid, purpose: 'loadMultiplayerGameStats:completed' });
+    throw completedError;
+  }
+
+  if (winsError && !isMissingTableError(winsError)) {
+    logSupabaseError('games', 'select', winsError, { uid, purpose: 'loadMultiplayerGameStats:wins' });
+    throw winsError;
+  }
+
+  if (isMissingTableError(completedError) || isMissingTableError(winsError)) {
+    return null;
+  }
+
+  const normalizedCompletedGames = normalizeCount(completedGames);
+  const normalizedWins = normalizeCount(wins);
+
+  return {
+    completedGames: normalizedCompletedGames,
+    wins: normalizedWins,
+    losses: Math.max(normalizedCompletedGames - normalizedWins, 0),
+  };
+}
+
 async function loadQuestionStats(uid: string) {
   const [{ data: totalsRow, error: totalsError }, { data: categoryRows, error: categoryError }] = await Promise.all([
     supabase
@@ -150,9 +188,12 @@ async function loadPlayerProfile(uid: string) {
   }
 
   const mappedProfile = mapPostgresProfileToPlayerProfile(data);
-  const questionStats = await loadQuestionStats(uid);
+  const [questionStats, multiplayerGameStats] = await Promise.all([
+    loadQuestionStats(uid),
+    loadMultiplayerGameStats(uid),
+  ]);
 
-  if (!questionStats) {
+  if (!questionStats && !multiplayerGameStats) {
     return mappedProfile;
   }
 
@@ -160,9 +201,12 @@ async function loadPlayerProfile(uid: string) {
     ...mappedProfile,
     stats: buildStatsSummary({
       ...mappedProfile.stats,
-      totalQuestionsSeen: questionStats.totalQuestionsSeen,
-      totalQuestionsCorrect: questionStats.totalQuestionsCorrect,
-      categoryPerformance: questionStats.categoryPerformance,
+      completedGames: multiplayerGameStats?.completedGames ?? mappedProfile.stats?.completedGames,
+      wins: multiplayerGameStats?.wins ?? mappedProfile.stats?.wins,
+      losses: multiplayerGameStats?.losses ?? mappedProfile.stats?.losses,
+      totalQuestionsSeen: questionStats?.totalQuestionsSeen ?? mappedProfile.stats?.totalQuestionsSeen,
+      totalQuestionsCorrect: questionStats?.totalQuestionsCorrect ?? mappedProfile.stats?.totalQuestionsCorrect,
+      categoryPerformance: questionStats?.categoryPerformance ?? mappedProfile.stats?.categoryPerformance,
     }),
   };
 }
@@ -306,10 +350,69 @@ async function loadProfilesByIds(ids: string[]) {
 }
 
 async function loadCompletedGamesForUser(uid: string): Promise<RecentCompletedGame[]> {
-  console.info('[playerProfiles] profile_recent_completed_games is not part of the live schema; returning empty recent completed games.', {
-    uid,
+  const { data, error } = await supabase
+    .from('games')
+    .select('id, player_ids, winner_user_id, game_mode, status, result, completed_at, updated_at, created_at')
+    .eq('status', 'completed')
+    .eq('game_mode', 'multiplayer')
+    .contains('player_ids', [uid])
+    .order('completed_at', { ascending: false, nullsFirst: false })
+    .order('updated_at', { ascending: false })
+    .limit(12);
+
+  if (error) {
+    if (isMissingTableError(error)) {
+      return [];
+    }
+
+    logSupabaseError('games', 'select', error, { uid, purpose: 'loadCompletedGamesForUser' });
+    throw error;
+  }
+
+  const rows = data || [];
+  const allPlayerIds = rows.flatMap((row) =>
+    Array.isArray(row.player_ids)
+      ? row.player_ids.filter((entry: unknown): entry is string => typeof entry === 'string')
+      : []
+  );
+  const profileMap = await loadProfilesByIds(allPlayerIds);
+
+  return rows.map((row) => {
+    const playerIds = Array.isArray(row.player_ids)
+      ? row.player_ids.filter((entry: unknown): entry is string => typeof entry === 'string')
+      : [];
+    const result = row.result && typeof row.result === 'object' ? row.result : {};
+    const finalScores =
+      result.finalScores && typeof result.finalScores === 'object'
+        ? result.finalScores as Record<string, number>
+        : {};
+    const categoriesUsed = Array.isArray(result.categoriesUsed)
+      ? result.categoriesUsed.filter((entry: unknown): entry is string => typeof entry === 'string')
+      : [];
+
+    return {
+      gameId: row.id,
+      players: playerIds.map((playerId) => {
+        const profile = profileMap.get(playerId);
+        return {
+          uid: playerId,
+          nickname: profile?.nickname || 'Player',
+        };
+      }),
+      winnerId: typeof row.winner_user_id === 'string' ? row.winner_user_id : null,
+      finalScores,
+      categoriesUsed,
+      completedAt: row.completed_at
+        ? new Date(row.completed_at).getTime()
+        : row.updated_at
+          ? new Date(row.updated_at).getTime()
+          : row.created_at
+            ? new Date(row.created_at).getTime()
+            : Date.now(),
+      status: 'completed',
+      opponentIds: playerIds.filter((playerId) => playerId !== uid),
+    };
   });
-  return [];
 }
 
 export async function ensurePlayerProfile(user: SupabaseUser, nickname?: string) {

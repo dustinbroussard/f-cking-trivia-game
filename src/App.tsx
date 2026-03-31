@@ -45,13 +45,14 @@ import {
   type RecentAiQuestionContext,
   type HeckleTriggerReason,
 } from './content/heckles';
+import type { EndgameRoastResult } from './content/endgameRoast';
 import { getTrashTalkLine, TrashTalkEvent, type TrashTalkGenerationContext } from './content/trashTalk';
 import { publicAsset } from './assets';
 import { motion, AnimatePresence } from 'motion/react';
 import { LogOut, RefreshCcw, Trophy, ArrowLeft, Volume2, VolumeX, Send, Loader2, X, Sun, Moon, SlidersHorizontal, Mail, Copy, Check } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { DEFAULT_USER_SETTINGS, getLocalSettings, loadUserSettings, mergeSettings, saveLocalSettings, saveUserSettings } from './services/userSettings';
-import { generateHeckles, generateTrashTalk } from './services/gemini';
+import { generateEndgameRoast, generateHeckles, generateTrashTalk } from './services/gemini';
 import { notifySafe, requestNotificationPermissionSafe } from './services/notify';
 import { ensurePlayerProfile, loadMatchupHistory, MAX_NICKNAME_LENGTH, recordCompletedGame, recordQuestionStats, removePlayerAvatar, removeRecentPlayer, sanitizeNicknameInput, savePlayerAvatar, savePlayerNickname, subscribePlayerProfile, subscribeRecentCompletedGames, subscribeRecentPlayers, updateRecentPlayer } from './services/playerProfiles';
 import { isSupabaseRlsInsertError } from './services/supabaseUtils';
@@ -165,6 +166,49 @@ interface MatchupHistoryState {
   games: RecentCompletedGame[];
 }
 
+function getRecentQuestionHistoryForPlayer(
+  activeGame: GameState,
+  sessionQuestions: TriviaQuestion[],
+  playerId: string
+): RecentAiQuestionContext[] {
+  const questionById = new Map(sessionQuestions.map((question) => [question.id, question]));
+  const questionOrder = activeGame.questionIds ?? Object.keys(activeGame.answers ?? {});
+
+  return [...questionOrder]
+    .reverse()
+    .flatMap((questionId) => {
+      const answer = activeGame.answers?.[questionId]?.[playerId];
+      const question = questionById.get(questionId);
+
+      if (!answer || !question) {
+        return [];
+      }
+
+      const playerAnswer =
+        answer.source === 'timeout' || answer.answerIndex < 0
+          ? 'No answer before the timer expired'
+          : question.choices[answer.answerIndex] ?? 'Unknown answer';
+
+      const result: RecentAiQuestionContext['result'] =
+        answer.source === 'timeout' || answer.answerIndex < 0
+          ? 'timeout'
+          : answer.isCorrect
+            ? 'correct'
+            : 'wrong';
+
+      return [{
+        question: question.question,
+        category: question.category,
+        difficulty: question.difficulty,
+        playerAnswer,
+        correctAnswer: question.choices[question.correctIndex] ?? 'Unknown answer',
+        result,
+        explanation: question.explanation,
+      }];
+    })
+    .slice(0, 2);
+}
+
 export default function App() {
   const { user, hasResolvedInitialAuthState } = useAuth();
   const {
@@ -255,6 +299,8 @@ export default function App() {
   const [heckleQueue, setHeckleQueue] = useState<string[]>([]);
   const [pendingHeckleTrigger, setPendingHeckleTrigger] = useState<PendingHeckleTrigger | null>(null);
   const [confirmAction, setConfirmAction] = useState<'quit' | 'signout' | null>(null);
+  const [endgameRoast, setEndgameRoast] = useState<EndgameRoastResult | null>(null);
+  const [isGeneratingEndgameRoast, setIsGeneratingEndgameRoast] = useState(false);
 
   useEffect(() => {
     if (isMagicLinkSent) {
@@ -304,6 +350,7 @@ export default function App() {
   const currentWaitingStateKeyRef = useRef<string | null>(null);
   const waitingStateEnteredAtRef = useRef<number | null>(null);
   const lastHeckleEligibilityLogRef = useRef<string>('');
+  const endgameRoastRequestKeyRef = useRef<string>('');
   const latestHeckleEligibilityRef = useRef<{ allowed: boolean; reason: string }>({
     allowed: false,
     reason: 'uninitialized',
@@ -1775,6 +1822,107 @@ export default function App() {
     }
     prevGameStatus.current = game?.status || null;
   }, [game?.status, game?.winnerId, user?.id, settings.soundEnabled, settings.sfxEnabled, lastTrashTalkEvent, tryPlay]);
+
+  useEffect(() => {
+    if (game?.status !== 'completed' || !game.id || questions.length > 0 || (game.questionIds?.length ?? 0) === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    getGameQuestions(game.id)
+      .then((storedQuestions) => {
+        if (cancelled || storedQuestions.length === 0) {
+          return;
+        }
+
+        setQuestions(storedQuestions);
+      })
+      .catch((error) => {
+        console.error('[endgame-roast] Failed to load stored game questions', {
+          gameId: game.id,
+          error,
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [game?.status, game?.id, game?.questionIds, questions.length, setQuestions]);
+
+  useEffect(() => {
+    if (game?.status !== 'completed' || !game?.id) {
+      setEndgameRoast(null);
+      setIsGeneratingEndgameRoast(false);
+      endgameRoastRequestKeyRef.current = '';
+      return;
+    }
+
+    if ((game.questionIds?.length ?? 0) > 0 && questions.length === 0) {
+      return;
+    }
+
+    if (isSolo || !game.winnerId || players.length < 2) {
+      setEndgameRoast(null);
+      setIsGeneratingEndgameRoast(false);
+      return;
+    }
+
+    const winner = players.find((player) => player.uid === game.winnerId);
+    const loser = players.find((player) => player.uid !== game.winnerId);
+
+    if (!winner || !loser) {
+      return;
+    }
+
+    const winnerRecentQuestionHistory = getRecentQuestionHistoryForPlayer(game, questions, winner.uid);
+    const loserRecentQuestionHistory = getRecentQuestionHistoryForPlayer(game, questions, loser.uid);
+    const requestKey = `${game.id}:${winner.uid}:${loser.uid}:${winnerRecentQuestionHistory.length}:${loserRecentQuestionHistory.length}`;
+
+    if (endgameRoastRequestKeyRef.current === requestKey) {
+      return;
+    }
+
+    endgameRoastRequestKeyRef.current = requestKey;
+    setIsGeneratingEndgameRoast(true);
+    setEndgameRoast(null);
+
+    const requestPayload = {
+      winnerName: winner.name || 'Winner',
+      loserName: loser.name || 'Loser',
+      winnerScore: winner.score,
+      loserScore: loser.score,
+      winnerTrophies: winner.completedCategories?.length ?? 0,
+      loserTrophies: loser.completedCategories?.length ?? 0,
+      winnerRecentQuestionHistory,
+      loserRecentQuestionHistory,
+      isSolo,
+    };
+
+    Promise.race<EndgameRoastResult | null>([
+      generateEndgameRoast(requestPayload),
+      new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 2200)),
+    ])
+      .then((generatedRoast) => {
+        if (endgameRoastRequestKeyRef.current !== requestKey) {
+          return;
+        }
+
+        setEndgameRoast(generatedRoast);
+      })
+      .catch((error) => {
+        console.error('[endgame-roast] Request failed', {
+          gameId: game.id,
+          requestKey,
+          error,
+        });
+      })
+      .finally(() => {
+        if (endgameRoastRequestKeyRef.current === requestKey) {
+          setIsGeneratingEndgameRoast(false);
+        }
+      });
+  }, [game, isSolo, players, questions]);
 
   useEffect(() => {
     if (game?.status !== 'abandoned') return;
@@ -3723,13 +3871,33 @@ export default function App() {
                       transition={{ type: 'spring', stiffness: 300, damping: 25 }}
                       className="space-y-6 rounded-2xl border p-6 text-center theme-panel-strong backdrop-blur-xl sm:space-y-8 sm:p-12"
                     >
-                      <Trophy className="w-24 h-24 mx-auto text-yellow-400 drop-shadow-[0_0_30px_rgba(250,204,21,0.4)] animate-bounce" />
+                      <Trophy className="w-24 h-24 mx-auto text-yellow-400 drop-shadow-[0_0_30px_rgba(250,204,21,0.4)]" />
                       <div>
                         <h2 className="text-4xl font-black uppercase tracking-tight mb-2">Game Over</h2>
                         <p className="text-xl theme-text-muted">
                           {game.winnerId === user.id ? "You actually won. Incredible." : "You lost. Shocker."}
                         </p>
                       </div>
+                      {endgameRoast ? (
+                        <div className="space-y-4 rounded-2xl border border-white/10 bg-black/20 p-4 text-left">
+                          <div className="space-y-1">
+                            <p className="text-[0.65rem] font-black uppercase tracking-[0.24em] text-rose-300">
+                              Final Insult For {players.find((player) => player.uid !== game.winnerId)?.name || 'The Loser'}
+                            </p>
+                            <p className="text-base font-semibold leading-relaxed text-white sm:text-lg">{endgameRoast.loserRoast}</p>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-[0.65rem] font-black uppercase tracking-[0.24em] text-emerald-300">
+                              Backhanded Praise For {players.find((player) => player.uid === game.winnerId)?.name || 'The Winner'}
+                            </p>
+                            <p className="text-base font-semibold leading-relaxed text-white sm:text-lg">{endgameRoast.winnerCompliment}</p>
+                          </div>
+                        </div>
+                      ) : isGeneratingEndgameRoast ? (
+                        <p className="text-sm font-bold uppercase tracking-[0.2em] theme-text-muted">
+                          Preparing one last cheap shot...
+                        </p>
+                      ) : null}
                       {game.hostId === user.id ? (
                         <button type="button"
                           onClick={playAgain}
