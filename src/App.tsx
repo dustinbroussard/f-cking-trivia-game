@@ -3713,7 +3713,7 @@ export default function App() {
                       </p>
                     </div>
                   ) : (
-                    <div className="text-center p-6 sm:p-12 theme-panel border rounded-3xl space-y-4 sm:space-y-6 lg:w-full">
+                    <div className="text-center p-6 sm:p-12 theme-panel border rounded-3xl space-y-3 sm:space-y-5 lg:w-full">
                       <Loader2 className="w-8 h-8 text-pink-500 animate-spin mx-auto mb-4" />
                       <p className="text-lg font-medium theme-text-muted">Waiting for {players.find(p => p.uid === game.currentTurn)?.name} to spin...</p>
                       <HeckleOverlay
