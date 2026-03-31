@@ -3319,7 +3319,7 @@ export default function App() {
               )}
               <div className="flex items-center gap-2">
                 {isEditingNickname ? (
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col items-end gap-2">
                     <input
                       type="text"
                       value={nickname}
@@ -3336,22 +3336,32 @@ export default function App() {
                       className="h-9 w-32 rounded-xl theme-panel border bg-transparent px-3 text-xs font-bold tracking-wide focus:outline-none focus:ring-2 focus:ring-pink-500/50 theme-inset sm:w-40"
                       autoFocus
                     />
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveNickname()}
-                      disabled={isSavingNickname || !sanitizeNicknameInput(nickname)}
-                      className="rounded-xl bg-pink-600 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white transition-all disabled:opacity-50"
-                    >
-                      {isSavingNickname ? '...' : 'Save'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCancelNicknameEdit}
-                      disabled={isSavingNickname}
-                      className="rounded-xl theme-button px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-50"
-                    >
-                      Cancel
-                    </button>
+                    <div className="flex w-full items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveNickname()}
+                        disabled={isSavingNickname || !sanitizeNicknameInput(nickname)}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-pink-600 text-white transition-all disabled:opacity-50"
+                        aria-label={isSavingNickname ? 'Saving nickname' : 'Save nickname'}
+                        title={isSavingNickname ? 'Saving nickname' : 'Save nickname'}
+                      >
+                        {isSavingNickname ? (
+                          <span className="text-sm font-black">...</span>
+                        ) : (
+                          <Check className="w-4 h-4" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelNicknameEdit}
+                        disabled={isSavingNickname}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full theme-button transition-all disabled:opacity-50"
+                        aria-label="Cancel nickname edit"
+                        title="Cancel nickname edit"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <button
