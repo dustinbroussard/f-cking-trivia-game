@@ -1713,7 +1713,7 @@ export default function App() {
   useEffect(() => {
     if (!activeTrashTalkEvent || !activeTrashTalk) return;
 
-    const timeoutMs = activeTrashTalkEvent === 'MATCH_LOSS' ? 4500 : 2500;
+    const timeoutMs = activeTrashTalkEvent === 'MATCH_LOSS' ? 5800 : 3800;
     const timeout = window.setTimeout(() => {
       setActiveTrashTalk(null);
       setActiveTrashTalkEvent(null);

@@ -1,4 +1,4 @@
-export const HECKLE_ROTATION_MS = 7600;
+export const HECKLE_ROTATION_MS = 9200;
 export const MAX_HECKLES = 3;
 export const HECKLE_REQUEST_COOLDOWN_MS = 15000;
 export const HECKLE_PROLONGED_WAIT_MS = 9000;
