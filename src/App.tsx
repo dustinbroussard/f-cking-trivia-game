@@ -65,6 +65,18 @@ import { useSound } from './hooks/useSound';
 
 const QUESTION_TIME_LIMIT_SECONDS = 30;
 const logoSrc = publicAsset('logo.png');
+const THEME_CHROME = {
+  dark: {
+    appBg: '#09090b',
+    colorScheme: 'dark',
+    appleStatusBarStyle: 'black-translucent',
+  },
+  light: {
+    appBg: '#f3eee6',
+    colorScheme: 'light',
+    appleStatusBarStyle: 'default',
+  },
+} as const;
 
 type ResultPhase = 'idle' | 'revealing' | 'explaining' | 'specialEvent';
 type QueuedSpecialEvent =
@@ -1365,8 +1377,20 @@ export default function App() {
   };
 
   useEffect(() => {
+    const chromeTheme = THEME_CHROME[settings.themeMode];
+
     document.documentElement.dataset.theme = settings.themeMode;
     document.body.dataset.theme = settings.themeMode;
+    document.documentElement.style.colorScheme = chromeTheme.colorScheme;
+    document.body.style.colorScheme = chromeTheme.colorScheme;
+
+    document
+      .querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')
+      .forEach((metaTag) => metaTag.setAttribute('content', chromeTheme.appBg));
+
+    document
+      .querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-status-bar-style"]')
+      ?.setAttribute('content', chromeTheme.appleStatusBarStyle);
   }, [settings.themeMode]);
 
   useEffect(() => {
