@@ -20,7 +20,7 @@ export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsS
 
   const N = CATEGORIES.length;
   const segmentAngle = 360 / N;
-  const wheelInitialOffset = -90 - (segmentAngle / 2); // Makes index 0 perfectly centered at the top
+  const wheelInitialOffset = 90 - (segmentAngle / 2);
   const wheelSegmentColorVars: Record<Category, string> = {
     'History': 'var(--wheel-history)',
     'Science': 'var(--wheel-science)',
@@ -58,13 +58,13 @@ export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsS
   }, [controls, isSpinning, onSpinComplete, rotation, segmentAngle, setIsSpinning, soundEnabled]);
 
   return (
-    <div className="relative w-80 h-80 mx-auto drop-shadow-2xl">
+    <div className="relative w-80 h-96 mx-auto drop-shadow-2xl">
       <audio ref={spinAudioRef} src={spinAudioSrc} />
 
       <motion.div
         animate={controls}
         initial={{ rotate: rotation }}
-        className="w-full h-full rounded-full border-8 overflow-hidden relative ring-4"
+        className="w-80 h-80 mx-auto rounded-full border-8 overflow-hidden relative ring-4"
         style={{ borderColor: 'var(--app-border-strong)', boxShadow: 'var(--app-shadow-soft)' }}
       >
         {/* SVG Wheel Background */}
@@ -134,7 +134,7 @@ export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsS
         </svg>
       </motion.div>
 
-      <div className="absolute inset-0 flex items-center justify-center">
+      <div className="absolute inset-x-0 top-0 h-80 flex items-center justify-center">
         <button type="button"
           onClick={() => !isSpinning && setIsSpinning(true)}
           disabled={isSpinning}
@@ -144,6 +144,20 @@ export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsS
         >
           <span className="text-sm font-black uppercase tracking-[0.2em] ml-1">Spin</span>
         </button>
+      </div>
+
+      <div className="absolute left-1/2 bottom-0 -translate-x-1/2 flex flex-col items-center pointer-events-none">
+        <motion.div
+          animate={isSpinning ? { y: [0, 4, 0], scale: [1, 1.05, 1] } : { y: 0, scale: 1 }}
+          transition={isSpinning ? { duration: 0.5, repeat: Infinity, ease: 'easeInOut' } : { duration: 0.2 }}
+          className="relative flex flex-col items-center"
+        >
+          <div className="h-11 w-1 rounded-full bg-gradient-to-b from-fuchsia-300/70 via-fuchsia-400/55 to-fuchsia-500/0 shadow-[0_0_18px_rgba(217,70,239,0.28)]" />
+          <div
+            className="h-0 w-0 border-l-[18px] border-r-[18px] border-t-[26px] border-l-transparent border-r-transparent drop-shadow-[0_6px_14px_rgba(0,0,0,0.32)]"
+            style={{ borderTopColor: 'var(--wheel-pointer)' }}
+          />
+        </motion.div>
       </div>
     </div>
   );

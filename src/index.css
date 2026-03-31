@@ -34,11 +34,12 @@
   --wheel-art-music: #047857;
   --wheel-sports: #b45309;
   --wheel-technology: #1d4ed8;
-  --wheel-random: #d4d4d8;
+  --wheel-random: #e879f9;
   --wheel-icon: #fafafa;
-  --wheel-random-icon: #18181b;
+  --wheel-random-icon: #fafafa;
   --wheel-center: #09090b;
   --wheel-center-stroke: rgba(255, 255, 255, 0.1);
+  --wheel-pointer: #f472b6;
 }
 
 [data-theme="light"] {
@@ -67,11 +68,12 @@
   --wheel-art-music: #10b981;
   --wheel-sports: #f59e0b;
   --wheel-technology: #3b82f6;
-  --wheel-random: #ffffff;
+  --wheel-random: #f9a8d4;
   --wheel-icon: #ffffff;
   --wheel-random-icon: #18181b;
   --wheel-center: #18181b;
   --wheel-center-stroke: rgba(255, 255, 255, 0.1);
+  --wheel-pointer: #ec4899;
 }
 
 html,

@@ -4,15 +4,19 @@ import { CATEGORY_COLORS } from '../types';
 
 interface ManualCategoryPromptProps {
   categories: string[];
+  source?: 'streak' | 'wheel';
   onPickCategory: (category: string) => void;
   onSpinWheel: () => void;
 }
 
 export const ManualCategoryPrompt: React.FC<ManualCategoryPromptProps> = ({
   categories,
+  source = 'streak',
   onPickCategory,
   onSpinWheel,
 }) => {
+  const isWheelReward = source === 'wheel';
+
   return (
     <AnimatePresence>
       <motion.div
@@ -23,11 +27,13 @@ export const ManualCategoryPrompt: React.FC<ManualCategoryPromptProps> = ({
         className="w-full max-w-2xl mx-auto theme-panel-strong border rounded-2xl p-6 sm:p-8"
       >
         <p className="text-[10px] font-black uppercase tracking-[0.28em] text-cyan-400 mb-3">
-          Player's Choice Unlocked
+          {isWheelReward ? "Wheel's Choice" : "Player's Choice Unlocked"}
         </p>
         <h3 className="text-3xl font-black mb-2">Pick your next move.</h3>
         <p className="theme-text-secondary text-sm sm:text-base mb-6">
-          Two correct answers. Pick your next category or spin the wheel.
+          {isWheelReward
+            ? 'The wheel landed on Player’s Choice. Pick any category or spin again.'
+            : 'Two correct answers. Pick your next category or spin the wheel.'}
         </p>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">

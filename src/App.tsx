@@ -201,6 +201,7 @@ export default function App() {
   const [lastAnswerCorrect, setLastAnswerCorrect] = useState(false);
   const [manualPickReady, setManualPickReady] = useState(false);
   const [showManualPickPrompt, setShowManualPickPrompt] = useState(false);
+  const [manualPickSource, setManualPickSource] = useState<'streak' | 'wheel'>('streak');
   const [activeTrashTalk, setActiveTrashTalk] = useState<string | null>(null);
   const [activeTrashTalkEvent, setActiveTrashTalkEvent] = useState<TrashTalkEvent | null>(null);
   const [lastTrashTalkEvent, setLastTrashTalkEvent] = useState<TrashTalkEvent | null>(null);
@@ -585,11 +586,6 @@ export default function App() {
       setError('Failed to join game.');
       return false;
     }
-  };
-
-  const resolveWheelCategory = (category: string) => {
-    if (category !== 'Random') return category;
-    return playableCategories[Math.floor(Math.random() * playableCategories.length)];
   };
 
   const persistQuestionsToGame = async (gameId: string, sessionQuestions: TriviaQuestion[]) => {
@@ -2367,8 +2363,16 @@ export default function App() {
     }
 
     setIsSpinning(false);
+    if (category === 'Random') {
+      setManualPickReady(true);
+      setManualPickSource('wheel');
+      setShowManualPickPrompt(true);
+      setResultPhase('specialEvent');
+      return;
+    }
+
     setResultPhase('idle');
-    const resolvedCategory = resolveWheelCategory(category);
+    const resolvedCategory = category;
 
     // Find an unused question in this category
     const available = questions.filter(q => !q.used && q.category === resolvedCategory);
@@ -2416,6 +2420,7 @@ export default function App() {
   const consumeManualPick = () => {
     setManualPickReady(false);
     setShowManualPickPrompt(false);
+    setManualPickSource('streak');
     setLastAnswerCorrect(false);
   };
 
@@ -2568,6 +2573,7 @@ export default function App() {
 
         if (lastAnswerCorrect && !earnedNewTrophy && !manualPickReady) {
           setManualPickReady(true);
+          setManualPickSource('streak');
           queueSpecialEvent({ kind: 'MANUAL_CATEGORY_UNLOCK' });
         }
         setLastAnswerCorrect(true);
@@ -3733,6 +3739,7 @@ export default function App() {
                           </div>
                           {manualPickReady && showManualPickPrompt ? (
                             <ManualCategoryPrompt
+                              source={manualPickSource}
                               categories={playableCategories}
                               onPickCategory={handleManualCategoryPick}
                               onSpinWheel={handleDeclineManualPick}

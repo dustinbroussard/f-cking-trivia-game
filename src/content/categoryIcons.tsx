@@ -1,4 +1,4 @@
-import { Atom, Cpu, Landmark, Palette, Shuffle, Trophy, Tv, type LucideIcon } from 'lucide-react';
+import { Atom, Cpu, Hand, Landmark, Palette, Trophy, Tv, type LucideIcon } from 'lucide-react';
 
 export const CATEGORY_ICONS: Record<string, LucideIcon> = {
   'History': Landmark,
@@ -7,7 +7,7 @@ export const CATEGORY_ICONS: Record<string, LucideIcon> = {
   'Art & Music': Palette,
   'Sports': Trophy,
   'Technology': Cpu,
-  'Random': Shuffle,
+  'Random': Hand,
 };
 
 export function getCategoryIcon(category: string) {
