@@ -658,36 +658,6 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                     </div>
 
                     <div className="space-y-3">
-                      <h5 className="text-xs font-black uppercase tracking-widest theme-text-muted">Recent Completed Games</h5>
-                      {profileError && (
-                        <p className="text-sm text-rose-300">{profileError}</p>
-                      )}
-                      {recentCompletedGamesStatus === 'loading' ? (
-                        <p className="text-sm theme-text-muted">Loading recent games...</p>
-                      ) : recentCompletedGamesStatus === 'error' ? (
-                        <p className="text-sm text-rose-300">{recentCompletedGamesError || 'Failed to load recent games.'}</p>
-                      ) : recentCompletedGames.length === 0 ? (
-                        <p className="text-sm theme-text-muted">Finish a game and your latest results will show up here.</p>
-                      ) : (
-                        recentCompletedGames.map((game) => (
-                          <div key={game.gameId} className="theme-soft-surface border rounded-2xl p-4 flex items-center justify-between gap-4">
-                            <div>
-                              <p className="text-sm font-bold">
-                                {game.players.map((player) => getDisplayName(player)).join(' vs ')}
-                              </p>
-                              <p className="text-[0.625rem] uppercase tracking-widest theme-text-muted">
-                                {new Date(game.completedAt).toLocaleDateString()} • {game.categoriesUsed.join(', ') || 'No categories'}
-                              </p>
-                            </div>
-                            <p className="text-xs font-black uppercase tracking-widest theme-text-secondary">
-                              Winner: {getDisplayName(game.players.find((player) => player.uid === game.winnerId))}
-                            </p>
-                          </div>
-                        ))
-                      )}
-                    </div>
-
-                    <div className="space-y-3">
                       <h5 className="text-xs font-black uppercase tracking-widest theme-text-muted">Category Performance</h5>
                       {Object.entries(profileStats.categoryPerformance).length === 0 ? (
                         <p className="text-sm theme-text-muted">Category accuracy shows up after you finish completed games.</p>
