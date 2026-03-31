@@ -1,3 +1,5 @@
+import type { RecentAiQuestionContext } from './heckles';
+
 export type TrashTalkEvent = 'OPPONENT_TROPHY' | 'PLAYER_FALLING_BEHIND' | 'MATCH_LOSS';
 
 export interface TrashTalkGenerationContext {
@@ -11,6 +13,7 @@ export interface TrashTalkGenerationContext {
   opponentTrophies: number;
   latestCategory?: string;
   outcomeSummary: string;
+  recentQuestionHistory?: RecentAiQuestionContext[];
   isSolo: boolean;
 }
 
@@ -52,12 +55,21 @@ Context:
 - Trophies: ${context.playerName} ${context.playerTrophies}, ${context.opponentName} ${context.opponentTrophies}
 - Latest category swing: ${context.latestCategory || 'Unknown'}
 - Outcome summary: ${context.outcomeSummary}
+- Last two resolved questions:
+${context.recentQuestionHistory?.length
+  ? context.recentQuestionHistory
+      .map((item, index) => `  ${index + 1}. "${item.question}" | category: ${item.category} | player answer: "${item.playerAnswer}" | correct answer: "${item.correctAnswer}" | result: ${item.result}`)
+      .join('\n')
+  : '  None recorded'}
 
 Rules:
 - Return only the trash-talk line
 - One to two sentences max
 - Sound sharp, witty, smug, and playful
 - Make it feel handcrafted to this exact moment
+- Use the supplied specifics when available; anchor the line in the actual miss, category swing, score, or recent answer history
+- Avoid generic sports-announcer filler or insults that could fit any match
+- Prefer one precise observation over broad swagger
 - No slurs
 - No hate content
 - No threats

@@ -9,6 +9,16 @@ export type HeckleTriggerReason =
   | 'score_deficit'
   | 'prolonged_wait';
 
+export interface RecentAiQuestionContext {
+  question: string;
+  category: string;
+  difficulty: string;
+  playerAnswer: string;
+  correctAnswer: string;
+  result: 'correct' | 'wrong' | 'timeout';
+  explanation?: string;
+}
+
 export interface HeckleGenerationContext {
   playerName: string;
   opponentName?: string;
@@ -23,6 +33,7 @@ export interface HeckleGenerationContext {
   category?: string;
   difficulty?: string;
   recentFailure?: string;
+  recentQuestionHistory?: RecentAiQuestionContext[];
   isSolo: boolean;
 }
 
@@ -54,6 +65,12 @@ Context:
 - Category: ${context.category || 'Unknown'}
 - Difficulty: ${context.difficulty || 'Unknown'}
 - Recent failure details: ${context.recentFailure || 'None recorded'}
+- Last two resolved questions:
+${context.recentQuestionHistory?.length
+  ? context.recentQuestionHistory
+      .map((item, index) => `  ${index + 1}. "${item.question}" | category: ${item.category} | difficulty: ${item.difficulty} | player answer: "${item.playerAnswer}" | correct answer: "${item.correctAnswer}" | result: ${item.result}`)
+      .join('\n')
+  : '  None recorded'}
 
 Tone:
 - Highbrow, smug, impatient, professionally condescending
@@ -71,6 +88,9 @@ Rules:
 - Speak as if you are an authoritative observer of the game, not a participant
 - React to the specific failure and current score/streak state
 - Each heckle must use a different comedic structure (e.g., sarcasm, rhetorical question, mock praise, analogy)
+- Use at least one concrete detail from the provided context whenever possible: question topic, wrong answer, correct answer, category, difficulty, trophies, or score state
+- Do not write generic filler that could fit any trivia game moment
+- If the recent context is thin, lean into the exact score state or trigger rather than vague insults
 - Do not explain the rules of the game
 - When possible, incorporate category-specific references or metaphors
 - Do not repeat the same joke structure

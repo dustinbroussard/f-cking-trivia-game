@@ -42,6 +42,7 @@ import {
   HECKLE_REQUEST_COOLDOWN_MS,
   HECKLE_ROTATION_MS,
   shouldEnableHeckles,
+  type RecentAiQuestionContext,
   type HeckleTriggerReason,
 } from './content/heckles';
 import { getTrashTalkLine, TrashTalkEvent, type TrashTalkGenerationContext } from './content/trashTalk';
@@ -106,7 +107,29 @@ const LOSING_CHAT_TITLES = [
   'Coping Strategies Chat',
 ];
 
+const SIGN_IN_MARQUEE_LINES = [
+  'Welcome to the game... do your friends know about your humiliation kink?',
+  'Sign in. Bad decisions play better with witnesses.',
+  'Google knows who you are. We just make it public.',
+  'Come on in. The leaderboard needs fresh victims.',
+  'This takes seconds. Regret lasts much longer.',
+  'One tap and your group chat gets new material.',
+  'Your trivia career is about to become a cautionary tale.',
+  'Log in. Somebody has to finish in last place.',
+  'Ready to test your knowledge and your tolerance for mockery?',
+  'You bring the confidence. We will handle the collapse.',
+  'Welcome to the game. Let’s explore your relationship with failure.',
+  'Come on in. This is where confidence goes to get corrected.',
+  'Don’t worry. Nobody remembers second place. Or third. Or you.',
+];
+
+const TYPEWRITER_TYPING_DELAY_MS = 62;
+
 const HEADER_DISPLAY_NAME_LIMIT = 10;
+
+function getRandomSignInMarqueeLine() {
+  return SIGN_IN_MARQUEE_LINES[Math.floor(Math.random() * SIGN_IN_MARQUEE_LINES.length)] ?? SIGN_IN_MARQUEE_LINES[0];
+}
 
 function truncateHeaderDisplayName(value: string, maxLength = HEADER_DISPLAY_NAME_LIMIT) {
   const trimmed = value.trim();
@@ -196,6 +219,8 @@ export default function App() {
   const [authLoadingMode, setAuthLoadingMode] = useState<'magic-link' | 'google' | null>(null);
   const [isMagicLinkSent, setIsMagicLinkSent] = useState(false);
   const [showEmailSignIn, setShowEmailSignIn] = useState(false);
+  const [activeSignInMarqueeLine, setActiveSignInMarqueeLine] = useState(() => getRandomSignInMarqueeLine());
+  const [renderedSignInMarqueeLine, setRenderedSignInMarqueeLine] = useState('');
   const [nickname, setNickname] = useState('');
   const [isSavingNickname, setIsSavingNickname] = useState(false);
   const [isEditingNickname, setIsEditingNickname] = useState(false);
@@ -218,6 +243,23 @@ export default function App() {
   const [heckleQueue, setHeckleQueue] = useState<string[]>([]);
   const [pendingHeckleTrigger, setPendingHeckleTrigger] = useState<PendingHeckleTrigger | null>(null);
   const [confirmAction, setConfirmAction] = useState<'quit' | 'signout' | null>(null);
+
+  useEffect(() => {
+    if (isMagicLinkSent) {
+      return undefined;
+    }
+
+    const currentLine = activeSignInMarqueeLine;
+    if (renderedSignInMarqueeLine.length >= currentLine.length) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setRenderedSignInMarqueeLine(currentLine.slice(0, renderedSignInMarqueeLine.length + 1));
+    }, TYPEWRITER_TYPING_DELAY_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [activeSignInMarqueeLine, isMagicLinkSent, renderedSignInMarqueeLine]);
   const [shouldBlurQuestionBackground, setShouldBlurQuestionBackground] = useState(false);
   const [resumePrompt, setResumePrompt] = useState<ResumePromptState | null>(null);
   const [isCheckingForResume, setIsCheckingForResume] = useState(false);
@@ -242,12 +284,7 @@ export default function App() {
   const recordedRecentPairKeysRef = useRef<Set<string>>(new Set());
   const lastTurnNotificationKeyRef = useRef<string>('');
   const lastFailureRef = useRef<string>('No recent embarrassment recorded.');
-  const lastHeckleQuestionContextRef = useRef<{
-    question: string;
-    category: string;
-    difficulty: string;
-    playerMissed: boolean;
-  } | null>(null);
+  const recentAiQuestionHistoryRef = useRef<RecentAiQuestionContext[]>([]);
   const lastHeckleWaitStateKeyRef = useRef<string>('');
   const heckleRequestIdRef = useRef(0);
   const heckleRequestInFlightRef = useRef<null | { requestId: number; waitStateKey: string }>(null);
@@ -779,6 +816,7 @@ export default function App() {
       opponentTrophies: contextOverrides.opponentTrophies ?? (opponentPlayer?.completedCategories?.length ?? 0),
       latestCategory: contextOverrides.latestCategory,
       outcomeSummary: contextOverrides.outcomeSummary || `${event} triggered during live play.`,
+      recentQuestionHistory: recentAiQuestionHistoryRef.current,
       isSolo,
     };
 
@@ -1167,7 +1205,8 @@ export default function App() {
     }
 
     const requestId = ++heckleRequestIdRef.current;
-    const lastQuestionContext = lastHeckleQuestionContextRef.current;
+    const recentQuestionHistory = recentAiQuestionHistoryRef.current;
+    const latestQuestionContext = recentQuestionHistory[0];
     const requestPayload = {
       playerName: currentPlayer.name || playerProfile?.nickname || user.email || 'Player',
       opponentName: opponentPlayer.name,
@@ -1177,11 +1216,12 @@ export default function App() {
       opponentScore: opponentPlayerScore,
       scoreDelta,
       recentPerformanceSummary: `${currentPlayer.name || 'You'}: ${currentPlayerScore} points, streak ${currentPlayer.streak || 0}. ${opponentPlayer.name}: ${opponentPlayerScore} points, streak ${opponentPlayer.streak || 0}.`,
-      lastQuestion: lastQuestionContext?.question,
-      playerMissedLastQuestion: lastQuestionContext?.playerMissed ?? false,
-      category: lastQuestionContext?.category,
-      difficulty: lastQuestionContext?.difficulty,
+      lastQuestion: latestQuestionContext?.question,
+      playerMissedLastQuestion: latestQuestionContext?.result !== 'correct',
+      category: latestQuestionContext?.category,
+      difficulty: latestQuestionContext?.difficulty,
       recentFailure: lastFailureRef.current,
+      recentQuestionHistory,
       isSolo,
     };
 
@@ -2488,12 +2528,17 @@ export default function App() {
     const isCorrect = resolvedIndex === currentQuestion.correctIndex;
     const selectedChoice = resolvedIndex >= 0 ? currentQuestion.choices[resolvedIndex] : 'No answer before the timer expired';
     const correctChoice = currentQuestion.choices[currentQuestion.correctIndex];
-    lastHeckleQuestionContextRef.current = {
+    const questionResult: RecentAiQuestionContext['result'] =
+      resolvedIndex < 0 ? 'timeout' : isCorrect ? 'correct' : 'wrong';
+    recentAiQuestionHistoryRef.current = [{
       question: currentQuestion.question,
       category: currentQuestion.category,
       difficulty: currentQuestion.difficulty,
-      playerMissed: !isCorrect,
-    };
+      playerAnswer: selectedChoice,
+      correctAnswer: correctChoice,
+      result: questionResult,
+      explanation: currentQuestion.explanation,
+    }, ...recentAiQuestionHistoryRef.current].slice(0, 2);
 
     if (sfxEnabled) {
       if (isCorrect) {
@@ -2867,7 +2912,7 @@ export default function App() {
     prevPlayersRef.current = [];
     recordedRecentPairKeysRef.current.clear();
     lastTurnNotificationKeyRef.current = '';
-    lastHeckleQuestionContextRef.current = null;
+    recentAiQuestionHistoryRef.current = [];
     lastHeckleWaitStateKeyRef.current = '';
     currentWaitingStateKeyRef.current = null;
     heckleRequestInFlightRef.current = null;
@@ -2932,7 +2977,7 @@ export default function App() {
       prevPlayersRef.current = [];
       recordedRecentPairKeysRef.current.clear();
       lastTurnNotificationKeyRef.current = '';
-      lastHeckleQuestionContextRef.current = null;
+      recentAiQuestionHistoryRef.current = [];
       lastHeckleWaitStateKeyRef.current = '';
       currentWaitingStateKeyRef.current = null;
       heckleRequestInFlightRef.current = null;
@@ -3107,13 +3152,13 @@ export default function App() {
             </button>
           </div>
 
-          <div className="flex-1 flex flex-col items-center justify-center w-full max-w-sm space-y-6 sm:space-y-8 mt-6 sm:mt-8">
+          <div className="flex-1 flex flex-col items-center justify-center w-full max-w-sm space-y-4 sm:space-y-5 mt-6 sm:mt-8">
             <motion.div
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               className="text-center relative"
             >
-              <div className="relative inline-block aspect-square w-[min(78vw,21.25rem)] sm:w-[min(59.5vw,25.5rem)]">
+              <div className="relative inline-block aspect-square w-[min(70vw,19.125rem)] sm:w-[min(53.5vw,22.95rem)]">
                 <img
                   src={logoSrc}
                   alt="A F-cking Trivia Game"
@@ -3122,6 +3167,37 @@ export default function App() {
                 />
               </div>
             </motion.div>
+
+            {!isMagicLinkSent ? (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="w-full h-[8.5rem] px-3 sm:h-[9rem] sm:px-4"
+              >
+                <div className="mx-auto flex h-full max-w-xl items-center justify-center rounded-2xl border border-white/10 bg-black/15 px-5 py-4 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm">
+                  <div className="relative flex w-full items-center justify-center">
+                    <p
+                      aria-hidden="true"
+                      className="invisible text-[1.28rem] leading-relaxed sm:text-[1.5rem]"
+                      style={{ fontFamily: 'var(--font-typewriter)', color: 'var(--app-text)' }}
+                    >
+                      {activeSignInMarqueeLine}
+                    </p>
+                    <p
+                      className="absolute inset-0 flex items-center justify-center text-[1.28rem] leading-relaxed sm:text-[1.5rem]"
+                      style={{ fontFamily: 'var(--font-typewriter)', color: 'var(--app-text)' }}
+                    >
+                      <span>
+                        {renderedSignInMarqueeLine}
+                        {renderedSignInMarqueeLine.length < activeSignInMarqueeLine.length ? (
+                          <span className="ml-0.5 inline-block h-[1.05em] w-[0.55ch] translate-y-[0.08em] animate-pulse rounded-[1px] bg-pink-400/90 align-middle" />
+                        ) : null}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+            ) : null}
 
             <AnimatePresence mode="wait">
               {isMagicLinkSent ? (
@@ -3157,15 +3233,6 @@ export default function App() {
                   exit={{ y: -20, opacity: 0 }}
                   className="w-full space-y-6"
                 >
-                  <div className="text-center space-y-2">
-                    <h3 className="text-2xl font-black uppercase tracking-tight">
-                      Sign In Instantly
-                    </h3>
-                    <p className="text-sm theme-text-muted">
-                      Continue with Google for the fastest way in.
-                    </p>
-                  </div>
-
                   <div className="space-y-4">
                     <button
                       type="button"
@@ -3225,7 +3292,7 @@ export default function App() {
                           type="button"
                           onClick={handleShowEmailSignIn}
                           disabled={authLoading}
-                          className="text-xs font-bold uppercase tracking-[0.22em] theme-text-muted transition-colors hover:text-pink-500 disabled:opacity-50"
+                          className="text-[0.63rem] font-semibold uppercase tracking-[0.18em] theme-text-muted transition-colors hover:text-pink-500 disabled:opacity-50"
                         >
                           Prefer email instead?
                         </button>

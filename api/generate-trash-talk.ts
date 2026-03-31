@@ -80,7 +80,7 @@ async function generateWithOpenRouter(prompt: string) {
       messages: [
         {
           role: 'system',
-          content: 'You write short, punchy trivia trash-talk lines for transient in-game overlays.',
+          content: 'You write short, punchy trivia trash-talk lines for transient in-game overlays. Use the exact game context and avoid generic filler.',
         },
         {
           role: 'user',
@@ -155,6 +155,7 @@ export default async function handler(req: any, res: any) {
       opponentTrophies: body.opponentTrophies ?? 0,
       latestCategory: body.latestCategory,
       outcomeSummary: body.outcomeSummary ?? 'Momentum shifted.',
+      recentQuestionHistory: body.recentQuestionHistory ?? [],
       isSolo: !!body.isSolo,
     });
 

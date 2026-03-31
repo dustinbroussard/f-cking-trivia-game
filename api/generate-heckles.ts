@@ -35,6 +35,7 @@ function summarizeContext(context: Partial<HeckleGenerationContext>) {
     difficulty: context.difficulty ?? null,
     hasLastQuestion: !!context.lastQuestion,
     hasRecentFailure: !!context.recentFailure,
+    recentQuestionHistoryCount: context.recentQuestionHistory?.length ?? 0,
   };
 }
 
@@ -58,6 +59,12 @@ function normalizeHeckle(rawText: string | null | undefined) {
 }
 
 function buildPrompt(context: Partial<HeckleGenerationContext>) {
+  const recentQuestionHistory = context.recentQuestionHistory?.length
+    ? context.recentQuestionHistory
+        .map((item, index) => `  ${index + 1}. "${item.question}" | category: ${item.category} | difficulty: ${item.difficulty} | player answer: "${item.playerAnswer}" | correct answer: "${item.correctAnswer}" | result: ${item.result}`)
+        .join('\n')
+    : '  None recorded';
+
   return `Write one short multiplayer trivia heckle for a waiting player.
 
 Context:
@@ -73,17 +80,21 @@ Context:
 - Difficulty: ${context.difficulty || 'Unknown'}
 - Recent performance summary: ${context.recentPerformanceSummary || 'No recent summary'}
 - Recent failure details: ${context.recentFailure || 'None'}
+- Last two resolved questions:
+${recentQuestionHistory}
 
 Rules:
 - Return only the heckle text
-- 1 to 3 lines max
-- Witty, snarky, playful
+- 1 to 2 sentences max
+- Witty, snarky, playful, and sharply specific
+- Use at least one concrete detail from the provided context whenever possible
+- Avoid generic filler that could fit any trivia match
+- If context is thin, anchor the joke in the exact score state or trigger instead of vague insults
 - No slurs
 - No hate content
 - No threats
 - No sexual content
 - No meta commentary
-- Use the provided context
 - Keep it punchy enough for a waiting-state UI`;
 }
 
@@ -127,7 +138,7 @@ async function generateWithOpenRouter(prompt: string) {
       messages: [
         {
           role: 'system',
-          content: 'You write brief, playful trivia heckles for waiting-state UI.',
+          content: 'You write sharp, highly specific trivia heckles for waiting-state UI. Use the supplied game details. Avoid generic roast filler.',
         },
         {
           role: 'user',
