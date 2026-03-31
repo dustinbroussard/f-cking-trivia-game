@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Download, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { publicAsset } from '../assets';
@@ -8,25 +8,39 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 }
 
+const INSTALL_PROMPT_SESSION_KEY = 'installPromptHandledThisSession';
+
+function isAppInstalled() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  return (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    // @ts-expect-error iOS standalone mode is non-standard.
+    window.navigator.standalone === true
+  );
+}
+
 export function InstallPrompt() {
   const logoSrc = publicAsset('logo.png');
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [isVisible, setIsVisible] = useState(false);
-
-  useEffect(() => {
-    // Check if app is already installed
-    const isStandalone =
-      window.matchMedia('(display-mode: standalone)').matches ||
-      // @ts-expect-error iOS standalone mode is non-standard.
-      window.navigator.standalone === true;
-
-    if (isStandalone) {
-      return;
+  const [isInstalled, setIsInstalled] = useState(() => isAppInstalled());
+  const [hasHandledPromptThisSession, setHasHandledPromptThisSession] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false;
     }
 
-    // Check if user dismissed prompt in this session
-    const isDismissed = sessionStorage.getItem('installPromptDismissed');
-    if (isDismissed) {
+    return sessionStorage.getItem(INSTALL_PROMPT_SESSION_KEY) === 'true';
+  });
+
+  const isVisible = useMemo(
+    () => !!deferredPrompt && !isInstalled && !hasHandledPromptThisSession,
+    [deferredPrompt, hasHandledPromptThisSession, isInstalled]
+  );
+
+  useEffect(() => {
+    if (isInstalled || hasHandledPromptThisSession) {
       return;
     }
 
@@ -34,15 +48,38 @@ export function InstallPrompt() {
       const installEvent = event as BeforeInstallPromptEvent;
       installEvent.preventDefault();
       setDeferredPrompt(installEvent);
-      setIsVisible(true);
+    };
+
+    const handleAppInstalled = () => {
+      setIsInstalled(true);
+      setDeferredPrompt(null);
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, [hasHandledPromptThisSession, isInstalled]);
+
+  useEffect(() => {
+    const displayModeMediaQuery = window.matchMedia('(display-mode: standalone)');
+    const syncInstalledState = () => setIsInstalled(isAppInstalled());
+
+    syncInstalledState();
+    displayModeMediaQuery.addEventListener?.('change', syncInstalledState);
+
+    return () => {
+      displayModeMediaQuery.removeEventListener?.('change', syncInstalledState);
     };
   }, []);
+
+  const markPromptHandledForSession = () => {
+    sessionStorage.setItem(INSTALL_PROMPT_SESSION_KEY, 'true');
+    setHasHandledPromptThisSession(true);
+  };
 
   const handleInstallClick = async () => {
     if (!deferredPrompt) return;
@@ -51,15 +88,15 @@ export function InstallPrompt() {
     const { outcome } = await deferredPrompt.userChoice;
 
     if (outcome === 'accepted') {
-      setIsVisible(false);
+      setIsInstalled(true);
     }
 
+    markPromptHandledForSession();
     setDeferredPrompt(null);
   };
 
   const handleDismiss = () => {
-    setIsVisible(false);
-    sessionStorage.setItem('installPromptDismissed', 'true');
+    markPromptHandledForSession();
   };
 
   return (

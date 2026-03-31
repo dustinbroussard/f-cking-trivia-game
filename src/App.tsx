@@ -37,6 +37,7 @@ import { TrashTalkOverlay } from './components/TrashTalkOverlay';
 import { HeckleOverlay } from './components/HeckleOverlay';
 import { ConfirmModal } from './components/ConfirmModal';
 import { CategoryReveal } from './components/CategoryReveal';
+import { InstallPrompt } from './components/InstallPrompt';
 import {
   HECKLE_PROLONGED_WAIT_MS,
   HECKLE_REQUEST_COOLDOWN_MS,
@@ -3368,6 +3369,7 @@ export default function App() {
       <audio ref={lostAudioRef} src={lostAudioSrc} />
       <audio ref={newGameAudioRef} src={newGameAudioSrc} />
       <audio ref={heckleChimeAudioRef} src={heckleChimeAudioSrc} />
+      <InstallPrompt />
 
       <div data-theme={themeMode} className="app-theme h-dvh min-h-dvh overflow-hidden font-sans flex flex-col">
         {!isQuestionActive && (
