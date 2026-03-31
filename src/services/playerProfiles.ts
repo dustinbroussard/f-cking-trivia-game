@@ -20,29 +20,150 @@ const AVATAR_STORAGE_BUCKET = 'avatars';
 const AVATAR_STORAGE_EXTENSION = 'jpg';
 let hasLoggedMissingQuestionStatsRpc = false;
 
+function normalizeCount(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function buildStatsSummary(input?: Partial<PlayerProfile['stats']>): NonNullable<PlayerProfile['stats']> {
+  const completedGames = normalizeCount(input?.completedGames);
+  const wins = normalizeCount(input?.wins);
+  const losses = normalizeCount(input?.losses);
+  const totalQuestionsSeen = normalizeCount(input?.totalQuestionsSeen);
+  const totalQuestionsCorrect = normalizeCount(input?.totalQuestionsCorrect);
+  const rawCategoryPerformance = input?.categoryPerformance ?? {};
+
+  const categoryPerformance = Object.fromEntries(
+    Object.entries(rawCategoryPerformance).map(([category, stats]) => {
+      const seen = normalizeCount(stats?.seen);
+      const correct = normalizeCount(stats?.correct);
+      const percentageCorrect = seen > 0 ? Math.round((correct / seen) * 100) : 0;
+
+      return [category, { seen, correct, percentageCorrect }];
+    })
+  );
+
+  return {
+    completedGames,
+    wins,
+    losses,
+    winPercentage: completedGames > 0 ? Math.round((wins / completedGames) * 100) : 0,
+    totalQuestionsSeen,
+    totalQuestionsCorrect,
+    categoryPerformance,
+  };
+}
+
+async function loadQuestionStats(uid: string) {
+  const [{ data: totalsRow, error: totalsError }, { data: categoryRows, error: categoryError }] = await Promise.all([
+    supabase
+      .from('question_stats_totals')
+      .select('total_answered, total_correct')
+      .eq('user_id', uid)
+      .maybeSingle(),
+    supabase
+      .from('question_stats_by_category')
+      .select('category, total_answered, total_correct')
+      .eq('user_id', uid),
+  ]);
+
+  if (totalsError && !isMissingRowError(totalsError) && !isMissingTableError(totalsError)) {
+    logSupabaseError('question_stats_totals', 'select', totalsError, { uid });
+    throw totalsError;
+  }
+
+  if (categoryError && !isMissingTableError(categoryError)) {
+    logSupabaseError('question_stats_by_category', 'select', categoryError, { uid });
+    throw categoryError;
+  }
+
+  if (isMissingTableError(totalsError) || isMissingTableError(categoryError)) {
+    return null;
+  }
+
+  const categoryPerformance = Object.fromEntries(
+    (categoryRows || []).map((row) => {
+      const seen = normalizeCount(row.total_answered);
+      const correct = normalizeCount(row.total_correct);
+
+      return [
+        row.category,
+        {
+          seen,
+          correct,
+          percentageCorrect: seen > 0 ? Math.round((correct / seen) * 100) : 0,
+        },
+      ];
+    })
+  );
+
+  return buildStatsSummary({
+    totalQuestionsSeen: totalsRow?.total_answered,
+    totalQuestionsCorrect: totalsRow?.total_correct,
+    categoryPerformance,
+  });
+}
+
 function mapPostgresProfileToPlayerProfile(profile: any): PlayerProfile {
   if (!profile) {
     return null as any;
   }
 
+  const nickname = profile.nickname ?? profile.display_name ?? null;
+  const avatarUrl = profile.avatar_url || profile.photo_url || undefined;
+
   return {
     userId: profile.id,
-    nickname: profile.nickname ?? null,
-    avatarUrl: profile.avatar_url || undefined,
-    stats: {
-      completedGames: profile.completed_games ?? 0,
-      wins: profile.wins ?? 0,
-      losses: profile.losses ?? 0,
-      winPercentage:
-        (profile.wins ?? 0) + (profile.losses ?? 0) > 0
-          ? Math.round(((profile.wins ?? 0) / ((profile.wins ?? 0) + (profile.losses ?? 0))) * 100)
-          : 0,
-      totalQuestionsSeen: profile.total_questions_seen ?? 0,
-      totalQuestionsCorrect: profile.total_questions_correct ?? 0,
+    nickname,
+    avatarUrl,
+    stats: buildStatsSummary({
+      completedGames: profile.completed_games,
+      wins: profile.wins,
+      losses: profile.losses,
+      totalQuestionsSeen: profile.total_questions_seen,
+      totalQuestionsCorrect: profile.total_questions_correct,
       categoryPerformance: profile.category_performance ?? {},
-    },
+    }),
     createdAt: profile.created_at,
     updatedAt: profile.updated_at,
+  };
+}
+
+async function loadPlayerProfile(uid: string) {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', uid)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingRowError(error)) {
+      return null;
+    }
+
+    logSupabaseError('profiles', 'select', error, { userId: uid, purpose: 'loadPlayerProfile' });
+    throw error;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  const mappedProfile = mapPostgresProfileToPlayerProfile(data);
+  const questionStats = await loadQuestionStats(uid);
+
+  if (!questionStats) {
+    return mappedProfile;
+  }
+
+  return {
+    ...mappedProfile,
+    stats: buildStatsSummary({
+      ...mappedProfile.stats,
+      totalQuestionsSeen: questionStats.totalQuestionsSeen,
+      totalQuestionsCorrect: questionStats.totalQuestionsCorrect,
+      categoryPerformance: questionStats.categoryPerformance,
+    }),
   };
 }
 
@@ -356,48 +477,44 @@ export function subscribePlayerProfile(
   callback: (profile: PlayerProfile | null) => void,
   onError?: (error: unknown) => void
 ) {
+  const refreshProfile = () => {
+    loadPlayerProfile(uid)
+      .then((profile) => {
+        console.info('[profiles] hydrated profile on app load', {
+          userId: uid,
+          avatarUrl: profile?.avatarUrl || null,
+          stats: profile?.stats || null,
+          profile,
+        });
+        callback(profile);
+      })
+      .catch((error) => {
+        logSupabaseError('profiles', 'select', error, { userId: uid, purpose: 'subscribePlayerProfile' });
+        onError?.(error);
+      });
+  };
+
   const channel = supabase
     .channel(`profile-${uid}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${uid}` },
-      (payload) => {
-        console.info('[profiles] realtime profile payload', {
-          userId: uid,
-          payload,
-        });
-        callback(payload.new ? mapPostgresProfileToPlayerProfile(payload.new) : null);
-      }
+      () => refreshProfile()
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'question_stats_totals', filter: `user_id=eq.${uid}` },
+      () => refreshProfile()
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'question_stats_by_category', filter: `user_id=eq.${uid}` },
+      () => refreshProfile()
     )
     .subscribe((status) => {
-      if (status !== 'SUBSCRIBED') {
-        return;
+      if (status === 'SUBSCRIBED') {
+        refreshProfile();
       }
-
-      supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', uid)
-        .maybeSingle()
-        .then(({ data, error }) => {
-          if (error) {
-            if (isMissingRowError(error)) {
-              callback(null);
-              return;
-            }
-
-            logSupabaseError('profiles', 'select', error, { userId: uid, purpose: 'subscribePlayerProfile' });
-            onError?.(error);
-            return;
-          }
-
-          console.info('[profiles] avatar fetch on app load', {
-            userId: uid,
-            avatarUrl: data?.avatar_url || null,
-            profileRow: data,
-          });
-          callback(mapPostgresProfileToPlayerProfile(data));
-        });
     });
 
   return () => {
