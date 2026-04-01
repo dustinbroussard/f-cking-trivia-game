@@ -18,7 +18,7 @@
 
 :root,
 [data-theme="dark"] {
-  --app-bg: #09090b;
+  --app-bg: #000000;
   --app-bg-elevated: rgba(24, 24, 27, 0.88);
   --app-bg-panel: rgba(24, 24, 27, 0.72);
   --app-bg-soft: rgba(39, 39, 42, 0.72);
@@ -151,11 +151,12 @@ summary {
 }
 
 /* Base transitions for all interactive elements */
-button, a {
-  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), 
-              background-color 0.2s ease, 
-              opacity 0.2s ease,
-              box-shadow 0.2s ease;
+button,
+a {
+  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275),
+    background-color 0.2s ease,
+    opacity 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 /* Accessibility: focus ring styles */
