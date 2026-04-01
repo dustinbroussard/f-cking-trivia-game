@@ -41,7 +41,6 @@ import { InstallPrompt } from './components/InstallPrompt';
 import {
   HECKLE_PROLONGED_WAIT_MS,
   HECKLE_REQUEST_COOLDOWN_MS,
-  HECKLE_ROTATION_MS,
   shouldEnableHeckles,
   type RecentAiQuestionContext,
   type HeckleTriggerReason,
@@ -835,6 +834,24 @@ export default function App() {
     setHeckleQueue([]);
   };
 
+  const dismissHeckleOverlay = () => {
+    if (heckleTimer.current) {
+      window.clearTimeout(heckleTimer.current);
+      heckleTimer.current = null;
+    }
+
+    setShowHeckle(false);
+    setActiveHeckle(null);
+  };
+
+  const dismissTrashTalkOverlay = () => {
+    setActiveTrashTalk(null);
+    setActiveTrashTalkEvent(null);
+    if (!showManualPickPrompt) {
+      setResultPhase('idle');
+    }
+  };
+
   const getHeckleTriggerPriority = (reason: HeckleTriggerReason) => {
     if (reason === 'wrong_answer' || reason === 'round_loss') return 3;
     if (reason === 'score_deficit') return 2;
@@ -1277,10 +1294,6 @@ export default function App() {
 
   useEffect(() => {
     if (!shouldShowOpponentHeckles || activeHeckle || heckleQueue.length === 0) {
-      if (!shouldShowOpponentHeckles && heckleTimer.current) {
-        window.clearTimeout(heckleTimer.current);
-        heckleTimer.current = null;
-      }
       return;
     }
 
@@ -1291,16 +1304,6 @@ export default function App() {
     setActiveHeckle(nextHeckle);
     setShowHeckle(true);
     setHeckleQueue(remainingHeckles);
-
-    if (heckleTimer.current) {
-      window.clearTimeout(heckleTimer.current);
-    }
-
-    heckleTimer.current = window.setTimeout(() => {
-      setShowHeckle(false);
-      setActiveHeckle(null);
-      heckleTimer.current = null;
-    }, HECKLE_ROTATION_MS);
   }, [shouldShowOpponentHeckles, activeHeckle, heckleQueue, sfxEnabled, playSfx, heckleChimeAudioRef]);
 
   useEffect(() => {
@@ -2004,21 +2007,6 @@ export default function App() {
     resetGame();
     setError('This match was abandoned. Starting fresh.');
   }, [game?.status]);
-
-  useEffect(() => {
-    if (!activeTrashTalkEvent || !activeTrashTalk) return;
-
-    const timeoutMs = activeTrashTalkEvent === 'MATCH_LOSS' ? 5800 : 3800;
-    const timeout = window.setTimeout(() => {
-      setActiveTrashTalk(null);
-      setActiveTrashTalkEvent(null);
-      if (!showManualPickPrompt) {
-        setResultPhase('idle');
-      }
-    }, timeoutMs);
-
-    return () => window.clearTimeout(timeout);
-  }, [activeTrashTalkEvent, activeTrashTalk, showManualPickPrompt]);
 
   useEffect(() => {
     if (settings.commentaryEnabled) return;
@@ -4004,6 +3992,7 @@ export default function App() {
                       <HeckleOverlay
                         message={activeHeckle}
                         visible={showHeckle && shouldShowOpponentHeckles}
+                        onClose={dismissHeckleOverlay}
                       />
                     </div>
                   )}
@@ -4081,6 +4070,7 @@ export default function App() {
         <TrashTalkOverlay
           event={activeTrashTalkEvent}
           message={activeTrashTalk}
+          onClose={dismissTrashTalkOverlay}
         />
 
         {isCompletedMatch && completedMatchWinner && completedMatchLoser && (

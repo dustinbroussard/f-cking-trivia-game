@@ -6,15 +6,10 @@ import { ResultCard } from './ResultCard';
 interface TrashTalkOverlayProps {
   event: TrashTalkEvent | null;
   message: string | null;
+  onClose: () => void;
 }
 
-const TITLES: Record<TrashTalkEvent, string> = {
-  OPPONENT_TROPHY: 'Trash Talk',
-  PLAYER_FALLING_BEHIND: 'Trash Talk',
-  MATCH_LOSS: 'Final Verdict',
-};
-
-export const TrashTalkOverlay: React.FC<TrashTalkOverlayProps> = ({ event, message }) => {
+export const TrashTalkOverlay: React.FC<TrashTalkOverlayProps> = ({ event, message, onClose }) => {
   if (!event) return null;
 
   const displayMessage = message?.trim() || 'Couldn’t format commentary.';
@@ -26,7 +21,7 @@ export const TrashTalkOverlay: React.FC<TrashTalkOverlayProps> = ({ event, messa
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[54] flex items-center justify-center p-6 pointer-events-none"
+        className="fixed inset-0 z-[54] flex items-center justify-center p-4 sm:p-6 pointer-events-auto"
       >
         <motion.div
           aria-hidden="true"
@@ -41,15 +36,16 @@ export const TrashTalkOverlay: React.FC<TrashTalkOverlayProps> = ({ event, messa
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 14, scale: 0.98 }}
           transition={{ duration: 0.28, ease: 'easeOut' }}
-          className="relative z-10 w-full max-w-2xl"
+          className="relative z-10 w-full max-w-xl pointer-events-auto"
         >
           <ResultCard
             variant="trashTalk"
             label="Trash Talk"
-            title={TITLES[event]}
+            actionLabel="Continue"
+            onAction={onClose}
             className="w-full"
             body={
-              <p className="mx-auto max-w-[20ch] text-balance">
+              <p className="whitespace-pre-line text-balance">
                 {displayMessage}
               </p>
             }

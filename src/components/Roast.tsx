@@ -63,7 +63,6 @@ export const Roast: React.FC<RoastProps> = ({ explanation, isCorrect, questionId
         <div className="relative z-10 flex w-full max-w-md flex-col items-center gap-5 text-center">
           <ResultCard
             variant={isCorrect ? 'correct' : 'wrong'}
-            label={isCorrect ? 'Answer Locked' : 'Answer Locked'}
             title={isCorrect ? 'Correct!' : 'Wrong!'}
             actionLabel="Continue"
             onAction={onClose}

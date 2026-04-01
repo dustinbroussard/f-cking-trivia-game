@@ -4,8 +4,8 @@ export type ResultCardVariant = 'correct' | 'wrong' | 'trashTalk' | 'commentary'
 
 interface ResultCardProps {
   variant: ResultCardVariant;
-  label: string;
-  title: string;
+  label?: React.ReactNode;
+  title?: React.ReactNode;
   body: React.ReactNode;
   actionLabel?: string;
   onAction?: () => void;
@@ -27,8 +27,8 @@ export const ResultCard: React.FC<ResultCardProps> = ({
 
   return (
     <div className={`result-card result-card--${variant} ${className}`.trim()}>
-      <p className="result-card__label">{label}</p>
-      <h3 className="result-card__title">{title}</h3>
+      {label ? <p className="result-card__label">{label}</p> : null}
+      {title ? <h3 className="result-card__title">{title}</h3> : null}
       <div className="result-card__body">{body}</div>
       {hasAction && (
         <button
