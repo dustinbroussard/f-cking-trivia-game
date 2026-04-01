@@ -33,6 +33,15 @@ export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsS
     'Technology': 'var(--wheel-technology)',
     'Random': 'var(--wheel-random)',
   };
+  const wheelIconColorVars: Record<Category, string> = {
+    'History': 'var(--wheel-history-icon)',
+    'Science': 'var(--wheel-science-icon)',
+    'Pop Culture': 'var(--wheel-pop-culture-icon)',
+    'Art & Music': 'var(--wheel-art-music-icon)',
+    'Sports': 'var(--wheel-sports-icon)',
+    'Technology': 'var(--wheel-technology-icon)',
+    'Random': 'var(--wheel-random-icon)',
+  };
 
   useEffect(() => {
     if (isSpinning) {
@@ -99,11 +108,23 @@ export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsS
                 const textRad = (textAngle * Math.PI) / 180;
                 const accentColor = wheelSegmentColorVars[cat as Category];
                 const isEmphasized = landedIndex === i || hoveredIndex === i;
-                const segmentFill = isEmphasized
+                const segmentSurfaceFill = isEmphasized
                   ? 'var(--wheel-segment-active-fill)'
                   : i % 2 === 0
                     ? 'var(--wheel-segment-fill)'
                     : 'var(--wheel-segment-fill-alt)';
+                const accentOpacity = isEmphasized
+                  ? 'var(--wheel-segment-accent-opacity-active)'
+                  : 'var(--wheel-segment-accent-opacity)';
+                const accentWidth = isEmphasized
+                  ? 'var(--wheel-segment-accent-width-active)'
+                  : 'var(--wheel-segment-accent-width)';
+                const accentGlow = isEmphasized
+                  ? 'var(--wheel-segment-accent-glow-active)'
+                  : 'var(--wheel-segment-accent-glow)';
+                const iconGlow = isEmphasized
+                  ? 'var(--wheel-icon-glow-active)'
+                  : 'var(--wheel-icon-glow)';
 
                 // Push icon outward, closer to rim
                 const iconRadius = 65;
@@ -119,26 +140,29 @@ export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsS
                   >
                     <path
                       d={pathData}
-                      fill={segmentFill}
+                      fill={accentColor}
                       stroke="var(--wheel-segment-separator)"
                       strokeWidth="0.9"
                     />
                     <path
                       d={pathData}
+                      fill={segmentSurfaceFill}
+                      stroke="none"
+                    />
+                    <path
+                      d={pathData}
                       fill="none"
                       stroke={accentColor}
-                      strokeOpacity={isEmphasized ? 0.9 : 0.56}
-                      strokeWidth={isEmphasized ? 2 : 1.25}
+                      strokeOpacity={accentOpacity}
+                      strokeWidth={accentWidth}
                       style={{
-                        filter: isEmphasized
-                          ? `drop-shadow(0 0 8px ${accentColor})`
-                          : `drop-shadow(0 0 3px ${accentColor})`,
+                        filter: `drop-shadow(0 0 ${accentGlow} ${accentColor})`,
                       }}
                     />
                     {(() => {
                       const Icon = getCategoryIcon(cat);
                       const iconSize = 26;
-                      const iconColor = cat === 'Random' ? 'var(--wheel-random-icon)' : accentColor;
+                      const iconColor = wheelIconColorVars[cat as Category];
 
                       return (
                         <g transform={`rotate(${textAngle + 90}, ${iconX}, ${iconY})`} style={{ pointerEvents: 'none' }}>
@@ -151,9 +175,7 @@ export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsS
                               color={iconColor}
                               strokeWidth={2.5}
                               style={{
-                                filter: isEmphasized
-                                  ? `drop-shadow(0 0 10px ${accentColor})`
-                                  : `drop-shadow(0 0 5px ${accentColor})`,
+                                filter: `drop-shadow(0 0 ${iconGlow} ${accentColor})`,
                               }}
                             />
                           )}
