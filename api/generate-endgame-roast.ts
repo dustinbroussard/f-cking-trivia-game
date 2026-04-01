@@ -8,6 +8,13 @@ type ProviderName = 'gemini' | 'openrouter';
 
 interface EndgameRoastApiResponse extends EndgameRoastResult {}
 
+type OpenRouterMessageContent =
+  | string
+  | Array<{
+      type?: string;
+      text?: string;
+    }>;
+
 function parseBody(body: unknown) {
   if (!body) return {};
   if (typeof body === 'string') {
@@ -28,6 +35,23 @@ function getProvider() {
 
 function normalizeText(value: unknown) {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function extractOpenRouterText(content: OpenRouterMessageContent | null | undefined) {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const text = content
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('\n')
+    .trim();
+
+  return text.length > 0 ? text : null;
 }
 
 function parseResponse(rawText: string | null | undefined): EndgameRoastResult | null {
@@ -126,8 +150,8 @@ async function generateWithOpenRouter(prompt: string) {
     );
   }
 
-  const content = data?.choices?.[0]?.message?.content;
-  return parseResponse(typeof content === 'string' ? content : null);
+  const content = extractOpenRouterText(data?.choices?.[0]?.message?.content);
+  return parseResponse(content);
 }
 
 async function generateEndgameRoast(provider: ProviderName, prompt: string) {

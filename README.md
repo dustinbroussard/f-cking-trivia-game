@@ -1,6 +1,6 @@
 # A F-cking Trivia Game
 
-A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built with React, Vite, Supabase, and Gemini. It mixes a game-show wheel, Supabase-backed questions, live sync, lobby chat, audio cues, and sarcastic roast copy into something that feels closer to a chaotic couch competition than a polite quiz app.
+A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built with React, Vite, Supabase, and AI-generated commentary. It mixes a game-show wheel, Supabase-backed questions, live sync, lobby chat, audio cues, and sarcastic roast copy into something that feels closer to a chaotic couch competition than a polite quiz app.
 
 ## What this thing does
 
@@ -8,17 +8,20 @@ A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built w
 - **Multiplayer mode** with a 4-digit join code and shared live game state.
 - **Turn-based category wheel** so each round feels unpredictable.
 - **Win condition based on category coverage**: answer one question from each non-random category before your opponent does.
-- **Supabase-backed trivia and AI-generated heckles** so gameplay stays database-driven without losing the app’s tone.
+- **Supabase-backed trivia plus AI-generated heckles, trash talk, and endgame roasts** so gameplay stays database-driven without losing the app’s tone.
+- **Generated-only commentary overlays** with a shared game-show-host persona instead of canned stock filler.
+- **Large, high-contrast special-event cards** for commentary and trash talk so those moments actually read on screen.
 - **PWA install support** with a service worker, manifest, install prompt, and standalone display mode.
 - **Lobby chat + match history** for a little more trash talk and continuity.
+- **Randomized sign-in welcome audio** that picks one of two welcome clips before the theme resumes.
 
 ## Tech stack
 
 - **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, Motion
 - **State + realtime sync:** Supabase Auth + database/realtime services
-- **Content generation:** Gemini (`@google/genai`) for heckles
+- **Content generation:** Gemini (`@google/genai`) and provider-backed API routes for heckles, trash talk, and endgame roasts
 - **PWA bits:** `manifest.webmanifest`, `sw.js`, custom install prompt
-- **Media:** local audio assets for theme, spin, win/loss, and answer feedback
+- **Media:** local audio assets for theme, wheel spin, sign-in welcomes, win/loss, and answer feedback
 
 ## Core gameplay loop
 
@@ -42,10 +45,12 @@ A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built w
 │   └── icon-*.png             # install/app icons
 ├── src/
 │   ├── components/            # lobby, wheel, cards, prompts, overlays
-│   ├── services/gemini.ts     # heckle generation client
+│   ├── content/               # prompt builders and shared AI persona
+│   ├── services/gemini.ts     # client wrappers for commentary/roast generation
 │   ├── types.ts               # shared game data contracts
 │   ├── App.tsx                # main gameplay + realtime orchestration
 │   └── main.tsx               # React entry and service worker registration
+├── api/                       # provider-backed generation routes
 ├── metadata.json
 └── README.md
 ```
@@ -57,7 +62,7 @@ A F-cking Trivia Game is a real-time, two-player-friendly trivia brawler built w
 - Node.js 20+ recommended
 - npm
 - A Supabase project configured for auth/database access
-- A Gemini API key for heckle generation
+- A Gemini API key for commentary generation
 
 ### Installation
 
@@ -84,6 +89,12 @@ npm run dev
 ```
 
 Vite serves the app on port `3000` by default.
+
+## Audio behavior
+
+- On successful sign-in, the app randomly chooses `welcome1.mp3` or `welcome2.mp3`.
+- After the welcome clip finishes, the normal theme track resumes.
+- Starting a new match interrupts the theme long enough to play the new-game cue, then returns to the theme.
 
 ## Build and validation
 

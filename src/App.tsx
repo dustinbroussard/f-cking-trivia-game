@@ -923,7 +923,7 @@ export default function App() {
 
     const generatedMessage = await Promise.race<string | null>([
       generateTrashTalk(context),
-      new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 1800)),
+      new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 5000)),
     ]);
 
     if (!generatedMessage) {
@@ -1976,7 +1976,7 @@ export default function App() {
 
     Promise.race<EndgameRoastResult | null>([
       generateEndgameRoast(requestPayload),
-      new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 2200)),
+      new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 7000)),
     ])
       .then((generatedRoast) => {
         if (endgameRoastRequestKeyRef.current !== requestKey) {

@@ -71,7 +71,7 @@ export const Roast: React.FC<RoastProps> = ({ explanation, isCorrect, questionId
             {!isCorrect && (
               <SafeRichText
                 as="p"
-                className="mb-4 text-base font-black leading-relaxed text-rose-200"
+                className="theme-incorrect-quip mb-4 text-base font-black leading-relaxed"
                 html={wrongAnswerQuip}
               />
             )}

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { GoogleGenAI } from '@google/genai';
-import { buildHecklePrompt, type HeckleGenerationContext } from '../src/content/heckles.js';
+import { buildHecklePrompt, MAX_HECKLES, type HeckleGenerationContext } from '../src/content/heckles.js';
 import { MODERN_HOST_SYSTEM_PROMPT } from '../src/content/hostPersona.js';
 
 type ProviderName = 'gemini' | 'openrouter';
@@ -9,6 +9,13 @@ interface HeckleApiResponse {
   heckle: string | null;
   heckles: string[];
 }
+
+type OpenRouterMessageContent =
+  | string
+  | Array<{
+      type?: string;
+      text?: string;
+    }>;
 
 function parseBody(body: unknown) {
   if (!body) return {};
@@ -59,6 +66,54 @@ function normalizeHeckle(rawText: string | null | undefined) {
   return cleaned.length > 0 ? cleaned : null;
 }
 
+function normalizeHeckles(rawHeckles: unknown) {
+  if (!Array.isArray(rawHeckles)) {
+    return [];
+  }
+
+  return rawHeckles
+    .filter((heckle): heckle is string => typeof heckle === 'string')
+    .map((heckle) => normalizeHeckle(heckle))
+    .filter((heckle): heckle is string => !!heckle)
+    .slice(0, MAX_HECKLES);
+}
+
+function extractOpenRouterText(content: OpenRouterMessageContent | null | undefined) {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const text = content
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('\n')
+    .trim();
+
+  return text.length > 0 ? text : null;
+}
+
+function parseHeckleResponse(rawText: string | null | undefined) {
+  const normalizedText = normalizeHeckle(rawText);
+  if (!normalizedText) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(normalizedText);
+    const parsedHeckles = normalizeHeckles(parsed?.heckles);
+    if (parsedHeckles.length > 0) {
+      return parsedHeckles;
+    }
+  } catch {
+    // Some providers will ignore the JSON instruction and return plain text.
+  }
+
+  return [normalizedText];
+}
+
 function getProvider() {
   if (process.env.OPENROUTER_API_KEY) return 'openrouter' as const;
   if (process.env.GEMINI_API_KEY) return 'gemini' as const;
@@ -77,7 +132,7 @@ async function generateWithGemini(prompt: string) {
     contents: prompt,
   });
 
-  return normalizeHeckle(response.text);
+  return parseHeckleResponse(response.text);
 }
 
 async function generateWithOpenRouter(prompt: string) {
@@ -131,8 +186,8 @@ async function generateWithOpenRouter(prompt: string) {
     );
   }
 
-  const content = data?.choices?.[0]?.message?.content;
-  return normalizeHeckle(typeof content === 'string' ? content : null);
+  const content = extractOpenRouterText(data?.choices?.[0]?.message?.content);
+  return parseHeckleResponse(content);
 }
 
 async function generateHeckle(provider: ProviderName, prompt: string) {
@@ -143,10 +198,10 @@ async function generateHeckle(provider: ProviderName, prompt: string) {
   return generateWithGemini(prompt);
 }
 
-function sendJson(res: any, status: number, heckle: string | null) {
+function sendJson(res: any, status: number, heckles: string[]) {
   const payload: HeckleApiResponse = {
-    heckle,
-    heckles: heckle ? [heckle] : [],
+    heckle: heckles[0] ?? null,
+    heckles,
   };
 
   res.status(status).json(payload);
@@ -157,7 +212,7 @@ export default async function handler(req: any, res: any) {
     console.warn('[heckles/api] Rejected non-POST request', {
       method: req.method,
     });
-    sendJson(res, 405, null);
+    sendJson(res, 405, []);
     return;
   }
 
@@ -175,7 +230,7 @@ export default async function handler(req: any, res: any) {
 
     if (body.isSolo) {
       console.info('[heckles/api] Solo mode request, returning null heckle', requestSummary);
-      sendJson(res, 200, null);
+      sendJson(res, 200, []);
       return;
     }
 
@@ -185,7 +240,7 @@ export default async function handler(req: any, res: any) {
         hasGeminiKey: !!process.env.GEMINI_API_KEY,
         hasOpenRouterKey: !!process.env.OPENROUTER_API_KEY,
       });
-      sendJson(res, 200, null);
+      sendJson(res, 200, []);
       return;
     }
 
@@ -193,7 +248,7 @@ export default async function handler(req: any, res: any) {
       console.error('[heckles/api] Missing required request fields', {
         requestSummary,
       });
-      sendJson(res, 200, null);
+      sendJson(res, 200, []);
       return;
     }
 
@@ -220,22 +275,22 @@ export default async function handler(req: any, res: any) {
       promptPreview: prompt.slice(0, 240),
     });
 
-    const heckle = await generateHeckle(provider, prompt);
+    const heckles = await generateHeckle(provider, prompt);
 
     console.info('[heckles/api] Provider request completed', {
       provider,
       requestSummary,
-      heckleGenerated: !!heckle,
-      hecklePreview: heckle,
+      heckleCount: heckles.length,
+      hecklePreview: heckles[0] ?? null,
     });
 
-    sendJson(res, 200, heckle);
+    sendJson(res, 200, heckles);
   } catch (error) {
     console.error('[heckles/api] Unhandled provider failure', {
       error,
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : null,
     });
-    sendJson(res, 200, null);
+    sendJson(res, 200, []);
   }
 }

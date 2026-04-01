@@ -10,6 +10,13 @@ interface TrashTalkApiResponse {
   trashTalk: string | null;
 }
 
+type OpenRouterMessageContent =
+  | string
+  | Array<{
+      type?: string;
+      text?: string;
+    }>;
+
 function parseBody(body: unknown) {
   if (!body) return {};
   if (typeof body === 'string') {
@@ -47,6 +54,41 @@ function normalizeTrashTalk(rawText: string | null | undefined) {
   return cleaned.length > 0 ? cleaned : null;
 }
 
+function extractOpenRouterText(content: OpenRouterMessageContent | null | undefined) {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const text = content
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('\n')
+    .trim();
+
+  return text.length > 0 ? text : null;
+}
+
+function parseTrashTalkResponse(rawText: string | null | undefined) {
+  const normalizedText = normalizeTrashTalk(rawText);
+  if (!normalizedText) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(normalizedText);
+    if (typeof parsed?.trashTalk === 'string') {
+      return normalizeTrashTalk(parsed.trashTalk);
+    }
+  } catch {
+    // Some providers will ignore format instructions and return plain text.
+  }
+
+  return normalizedText;
+}
+
 async function generateWithGemini(prompt: string) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -59,7 +101,7 @@ async function generateWithGemini(prompt: string) {
     contents: prompt,
   });
 
-  return normalizeTrashTalk(response.text);
+  return parseTrashTalkResponse(response.text);
 }
 
 async function generateWithOpenRouter(prompt: string) {
@@ -113,8 +155,8 @@ async function generateWithOpenRouter(prompt: string) {
     );
   }
 
-  const content = data?.choices?.[0]?.message?.content;
-  return normalizeTrashTalk(typeof content === 'string' ? content : null);
+  const content = extractOpenRouterText(data?.choices?.[0]?.message?.content);
+  return parseTrashTalkResponse(content);
 }
 
 async function generateTrashTalk(provider: ProviderName, prompt: string) {

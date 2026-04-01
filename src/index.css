@@ -244,6 +244,14 @@ a {
   color: var(--app-text-muted);
 }
 
+.theme-incorrect-quip {
+  color: #7f1d1d;
+}
+
+[data-theme="dark"] .theme-incorrect-quip {
+  color: #fecdd3;
+}
+
 .theme-border {
   border: 1px solid var(--app-border);
 }
