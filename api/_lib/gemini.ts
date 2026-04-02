@@ -1,24 +1,85 @@
-export async function generateGeminiText(prompt: string, systemInstruction?: string) {
+interface GeminiTextOptions {
+  systemInstruction?: string;
+  temperature?: number;
+  maxOutputTokens?: number;
+  timeoutMs?: number;
+}
+
+interface GeminiTextResponse {
+  text: string | null;
+  model: string;
+  durationMs: number;
+}
+
+const GEMINI_MODEL = 'gemini-2.5-flash';
+
+function now() {
+  return Date.now();
+}
+
+function withTimeoutSignal(timeoutMs?: number) {
+  if (!timeoutMs) {
+    return {
+      signal: undefined,
+      cancel: () => {},
+    };
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(new Error(`gemini timed out after ${timeoutMs}ms`)), timeoutMs);
+
+  return {
+    signal: controller.signal,
+    cancel: () => clearTimeout(timeoutId),
+  };
+}
+
+export async function generateGeminiTextResponse(prompt: string, options: GeminiTextOptions = {}): Promise<GeminiTextResponse> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is missing');
   }
 
+  const {
+    systemInstruction,
+    temperature = 0.9,
+    maxOutputTokens = 180,
+    timeoutMs,
+  } = options;
+  const startedAt = now();
+
   try {
     const { GoogleGenAI } = await import('@google/genai');
     const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+    const sdkRequest = ai.models.generateContent({
+      model: GEMINI_MODEL,
       config: systemInstruction
         ? {
             systemInstruction,
+            temperature,
+            maxOutputTokens,
           }
-        : undefined,
+        : {
+            temperature,
+            maxOutputTokens,
+          },
       contents: prompt,
     });
+    const response = timeoutMs
+      ? await Promise.race([
+          sdkRequest,
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error(`gemini timed out after ${timeoutMs}ms`)), timeoutMs);
+          }),
+        ])
+      : await sdkRequest;
 
     if (typeof response.text === 'string') {
-      return response.text;
+      return {
+        text: response.text,
+        model: GEMINI_MODEL,
+        durationMs: now() - startedAt,
+      };
     }
   } catch (error) {
     console.error('[gemini/api] SDK request failed, falling back to REST', {
@@ -27,58 +88,74 @@ export async function generateGeminiText(prompt: string, systemInstruction?: str
     });
   }
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        system_instruction: systemInstruction
-          ? {
-              parts: [{ text: systemInstruction }],
-            }
-          : undefined,
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: prompt }],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.9,
-          maxOutputTokens: 180,
-        },
-      }),
-    }
-  );
-
-  const rawText = await response.text();
-  let data: any = null;
+  const { signal, cancel } = withTimeoutSignal(timeoutMs);
 
   try {
-    data = rawText ? JSON.parse(rawText) : null;
-  } catch (error) {
-    console.error('[gemini/api] REST fallback returned non-JSON payload', {
-      error,
-      rawText,
-    });
-  }
-
-  if (!response.ok) {
-    throw new Error(
-      `Gemini REST request failed with status ${response.status}: ${
-        data?.error?.message || rawText || 'Unknown error'
-      }`
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        signal,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          system_instruction: systemInstruction
+            ? {
+                parts: [{ text: systemInstruction }],
+              }
+            : undefined,
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: prompt }],
+            },
+          ],
+          generationConfig: {
+            temperature,
+            maxOutputTokens,
+          },
+        }),
+      }
     );
+
+    const rawText = await response.text();
+    let data: any = null;
+
+    try {
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch (error) {
+      console.error('[gemini/api] REST fallback returned non-JSON payload', {
+        error,
+        rawText,
+      });
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `Gemini REST request failed with status ${response.status}: ${
+          data?.error?.message || rawText || 'Unknown error'
+        }`
+      );
+    }
+
+    const text =
+      data?.candidates?.[0]?.content?.parts
+        ?.map((part: { text?: string } | null | undefined) => (typeof part?.text === 'string' ? part.text : ''))
+        .join('\n')
+        .trim() || '';
+
+    return {
+      text,
+      model: GEMINI_MODEL,
+      durationMs: now() - startedAt,
+    };
+  } finally {
+    cancel();
   }
+}
 
-  const text =
-    data?.candidates?.[0]?.content?.parts
-      ?.map((part: { text?: string } | null | undefined) => (typeof part?.text === 'string' ? part.text : ''))
-      .join('\n')
-      .trim() || '';
-
-  return text;
+export async function generateGeminiText(prompt: string, systemInstruction?: string) {
+  const response = await generateGeminiTextResponse(prompt, { systemInstruction });
+  return response.text ?? '';
 }
