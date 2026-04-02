@@ -99,7 +99,7 @@ export const Roast: React.FC<RoastProps> = ({ explanation, isCorrect, questionId
               type="button"
               onClick={() => setIsFlagConfirmOpen(true)}
               disabled={isFlagged || isSavingFlag}
-              className={`w-full rounded-xl border px-5 py-3 text-xs font-bold uppercase tracking-[0.18em] transition-all duration-300 ease-in-out active:scale-[0.98] ${
+              className={`w-full rounded-xl border px-4 py-3 text-[0.65rem] font-bold uppercase tracking-[0.12em] whitespace-nowrap transition-all duration-300 ease-in-out active:scale-[0.98] sm:px-5 ${
                 isFlagged
                   ? 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200'
                   : 'border-white/12 bg-white/[0.03] theme-text-secondary hover:scale-[1.02] hover:border-rose-400/35 hover:text-rose-200'

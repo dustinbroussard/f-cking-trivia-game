@@ -63,11 +63,6 @@ export const ManualCategoryPrompt: React.FC<ManualCategoryPromptProps> = ({
                   >
                     {category}
                   </span>
-                  {isCompleted && (
-                    <span className="mt-1 block text-[0.65rem] font-black uppercase tracking-[0.2em] text-black/70">
-                      Claimed
-                    </span>
-                  )}
                 </button>
               );
             })}
