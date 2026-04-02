@@ -5,6 +5,16 @@ import { defineConfig } from 'vite';
 
 function createContentSecurityPolicy(isDev: boolean) {
   const scriptSrc = ["'self'", 'https://apis.google.com'];
+  const imgSrc = [
+    "'self'",
+    'data:',
+    'blob:',
+    'https://*.googleusercontent.com',
+    'https://*.gstatic.com',
+    'https://*.googleapis.com',
+    'https://*.supabase.co',
+    'https://jrrzrgldqyvtastxaqkz.supabase.co',
+  ];
   const connectSrc = [
     "'self'",
     'https://*.supabase.co',
@@ -25,7 +35,7 @@ function createContentSecurityPolicy(isDev: boolean) {
     "default-src 'self'",
     `script-src ${scriptSrc.join(' ')}`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "img-src 'self' data: blob: https://*.googleusercontent.com https://*.gstatic.com https://*.googleapis.com",
+    `img-src ${imgSrc.join(' ')}`,
     "font-src 'self' data: https://fonts.gstatic.com",
     "media-src 'self' blob:",
     `connect-src ${connectSrc.join(' ')}`,

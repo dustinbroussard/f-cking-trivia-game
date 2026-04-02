@@ -470,7 +470,7 @@ function logGamesUpdatePayload(triggeredBy: string, gameId: string, payload: Rec
     gameId,
     payload,
     payloadKeys: Object.keys(payload),
-    hasLastUpdated: Object.prototype.hasOwnProperty.call(payload, 'last_updated'),
+    hasLastUpdatedAt: Object.prototype.hasOwnProperty.call(payload, 'last_updated_at'),
   });
 }
 
@@ -868,12 +868,14 @@ export async function persistQuestionsToGame(gameId: string, questionIds: string
 
   const state = normalizeStoredGameState(game.game_state);
   const nextQuestionIds = [...new Set([...(state.questionIds ?? []), ...questionIds])];
+  const updatePayload = {
+    game_state: { ...state, questionIds: nextQuestionIds },
+    last_updated_at: nowIsoString(),
+  };
+  logGamesUpdatePayload('persistQuestionsToGame', gameId, updatePayload);
   const { error } = await supabase
     .from('games')
-    .update({
-      game_state: { ...state, questionIds: nextQuestionIds },
-      last_updated_at: nowIsoString(),
-    })
+    .update(updatePayload)
     .eq('id', gameId);
 
   if (error) {
@@ -890,12 +892,14 @@ export async function replaceQuestionsInGame(gameId: string, questionIds: string
 
   const state = normalizeStoredGameState(game.game_state);
   const nextQuestionIds = [...new Set(questionIds)];
+  const updatePayload = {
+    game_state: { ...state, questionIds: nextQuestionIds },
+    last_updated_at: nowIsoString(),
+  };
+  logGamesUpdatePayload('replaceQuestionsInGame', gameId, updatePayload);
   const { error } = await supabase
     .from('games')
-    .update({
-      game_state: { ...state, questionIds: nextQuestionIds },
-      last_updated_at: nowIsoString(),
-    })
+    .update(updatePayload)
     .eq('id', gameId);
 
   if (error) {

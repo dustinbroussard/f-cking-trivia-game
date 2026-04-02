@@ -33,6 +33,12 @@ export function isSupabaseRlsInsertError(error: any) {
   return error?.code === '42501';
 }
 
+export function isGamesUpdatedAtSchemaError(error: any) {
+  return error?.code === '42703'
+    && typeof error?.message === 'string'
+    && error.message.includes('updated_at');
+}
+
 export function nowIsoString() {
   return new Date().toISOString();
 }

@@ -193,6 +193,30 @@ create unique index if not exists games_join_code_waiting_idx
 create index if not exists games_host_status_idx on public.games (host_profile_id, status, created_at desc);
 create index if not exists games_current_turn_idx on public.games (current_turn_profile_id, status);
 
+create or replace function public.touch_games_updated_at()
+returns trigger
+language plpgsql
+as $$
+declare
+  v_now timestamptz := now();
+begin
+  new.updated_at := v_now;
+
+  if new.last_updated_at is null or new.last_updated_at is not distinct from old.last_updated_at then
+    new.last_updated_at := v_now;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists touch_games_updated_at on public.games;
+
+create trigger touch_games_updated_at
+before update on public.games
+for each row
+execute function public.touch_games_updated_at();
+
 create table if not exists public.game_players (
   game_id uuid not null references public.games (id) on delete cascade,
   profile_id uuid not null references public.profiles (id) on delete cascade,

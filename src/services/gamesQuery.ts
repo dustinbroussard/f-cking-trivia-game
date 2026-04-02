@@ -9,6 +9,7 @@ const GAME_ROW_SELECT_COLUMN_LIST = [
   'result',
   'completed_at',
   'created_at',
+  'updated_at',
   'last_updated_at',
 ];
 

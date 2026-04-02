@@ -56,7 +56,7 @@ import { DEFAULT_USER_SETTINGS, getLocalSettings, loadUserSettings, mergeSetting
 import { generateEndgameRoast, generateHeckles, generateTrashTalk } from './services/gemini';
 import { notifySafe, requestNotificationPermissionSafe } from './services/notify';
 import { ensurePlayerProfile, loadMatchupHistory, MAX_NICKNAME_LENGTH, recordCompletedGame, recordQuestionStats, removePlayerAvatar, removeRecentPlayer, sanitizeNicknameInput, savePlayerAvatar, savePlayerNickname, subscribePlayerProfile, subscribeRecentCompletedGames, subscribeRecentPlayers, updateRecentPlayer } from './services/playerProfiles';
-import { isSupabaseRlsInsertError } from './services/supabaseUtils';
+import { isGamesUpdatedAtSchemaError, isSupabaseRlsInsertError } from './services/supabaseUtils';
 import { isUuid } from './services/supabaseUtils';
 
 // Hooks
@@ -407,6 +407,10 @@ export default function App() {
   const getFriendlyGameCreateError = (err: any) => {
     if (isSupabaseRlsInsertError(err)) {
       return 'Game creation is blocked by database permissions right now.';
+    }
+
+    if (isGamesUpdatedAtSchemaError(err)) {
+      return 'Game startup is blocked by an out-of-date database migration on games.updated_at.';
     }
 
     return 'Failed to start game.';
@@ -2543,7 +2547,7 @@ export default function App() {
 
       setGame(newGame);
     } catch (err) {
-      console.error(err);
+      console.error('[startSoloGame] Failed while creating or initializing solo game:', err);
       setError(getFriendlyGameCreateError(err));
     } finally {
       setIsStartingGame(false);
