@@ -1212,9 +1212,26 @@ export default function App() {
     !isSolo &&
     isDeferredTurnHandoffPending &&
     isAnswerFeedbackActive;
-  const effectiveCurrentTurnOwner = isTurnHandoffPending
+  const lockedTurnOwner = isTurnHandoffPending
     ? pendingTurnHandoff.nextTurnOwner
-    : game?.currentTurn ?? null;
+    : isDeferredTurnHandoffPending
+      ? deferredTurnHandoff.nextTurnOwner
+      : null;
+  const effectiveCurrentTurnOwner = lockedTurnOwner ?? game?.currentTurn ?? null;
+  const isUiInputLocked =
+    isTurnHandoffPending ||
+    isDeferredTurnHandoffPending ||
+    resultPhase !== 'idle' ||
+    !!roast ||
+    selectedAnswer !== null;
+  const currentPlayerCanAct =
+    !!game &&
+    !!user &&
+    game.status === 'active' &&
+    effectiveCurrentTurnOwner === user.id &&
+    !currentQuestion &&
+    !revealedCategory &&
+    !isUiInputLocked;
   const shouldShowCurrentTurnStage = !!game && game.status === 'active' && (
     shouldHoldMultiplayerWrongFeedback || (
       !isTurnHandoffPending && (
@@ -1295,7 +1312,7 @@ export default function App() {
     if (players.length < 2) {
       return { allowed: false, reason: 'not_multiplayer' };
     }
-    if (!isTurnHandoffPending && effectiveCurrentTurnOwner === user.id) {
+    if (currentPlayerCanAct) {
       return { allowed: false, reason: 'current_player_can_act' };
     }
     if (currentQuestion) {
@@ -1443,7 +1460,12 @@ export default function App() {
       multiplayerActive: !isSolo,
       waitingForOpponent: isWaitingForOpponent,
       currentTurn: game?.currentTurn ?? null,
+      effectiveCurrentTurnOwner,
       userId: user?.id ?? null,
+      currentPlayerCanAct,
+      uiInputLocked: isUiInputLocked,
+      isTurnHandoffPending,
+      isDeferredTurnHandoffPending,
       currentQuestionId: currentQuestion?.id ?? null,
       resultPhase,
       roastVisible: !!roast,
@@ -1465,7 +1487,12 @@ export default function App() {
     isSolo,
     isWaitingForOpponent,
     game?.currentTurn,
+    effectiveCurrentTurnOwner,
     user?.id,
+    currentPlayerCanAct,
+    isUiInputLocked,
+    isTurnHandoffPending,
+    isDeferredTurnHandoffPending,
     currentQuestion?.id,
     resultPhase,
     roast,
@@ -3133,7 +3160,7 @@ export default function App() {
     index: number,
     options?: { source?: 'answer' | 'timeout'; questionId?: string; submittedAt?: number }
   ) => {
-    if (!currentQuestion || !game || !user || game.status !== 'active' || resultPhase !== 'idle' || isTurnHandoffPending) return;
+    if (!currentQuestion || !game || !user || game.status !== 'active' || resultPhase !== 'idle' || isTurnHandoffPending || isDeferredTurnHandoffPending) return;
 
     const source = options?.source ?? 'answer';
     const questionId = options?.questionId ?? currentQuestion.id;
@@ -3196,7 +3223,18 @@ export default function App() {
       submittedByName: currentPlayer?.name ?? null,
       wasCorrect: isCorrect,
       source,
-      previousTurnOwner: game.currentTurn,
+      currentTurnUserIdBefore: game.currentTurn,
+      currentTurnUserIdAfterLocalLock: isCorrect ? game.currentTurn : getOpponentTurnOwner(game, user.id) ?? game.currentTurn,
+      computedCurrentPlayerCanAct: false,
+      uiInputLocked: true,
+      heckleEligibilityInputs: {
+        commentaryEnabled: settings.commentaryEnabled,
+        effectiveCurrentTurnOwnerAfterLocalLock: isCorrect ? game.currentTurn : getOpponentTurnOwner(game, user.id) ?? game.currentTurn,
+        hasCurrentQuestion: true,
+        hasRevealedCategory: !!revealedCategory,
+        resultPhaseAfterSubmission: 'revealing',
+        playersCount: players.length,
+      },
       selectedAnswerIndex: resolvedIndex,
     });
     setResultPhase('revealing');
@@ -3240,8 +3278,11 @@ export default function App() {
         console.info('[turnSync] Correct-answer branch selected', {
           gameId: game.id,
           submittedBy: user.id,
-          previousTurnOwner: game.currentTurn,
+          currentTurnUserIdBefore: game.currentTurn,
+          currentTurnUserIdAfter: game.currentTurn,
           nextTurnOwner: game.currentTurn,
+          current_player_can_act: false,
+          uiInputLocked: true,
           updatedFields: ['game_state.players'],
           localTurnHandlingDisabled: true,
         });
@@ -3320,8 +3361,23 @@ export default function App() {
           gameId: game.id,
           submittedBy: user.id,
           wasCorrect: false,
-          previousTurnOwner: game.currentTurn,
+          currentTurnUserIdBefore: game.currentTurn,
+          currentTurnUserIdAfter: nextTurnOwner,
           nextTurnOwner,
+          current_player_can_act: false,
+          uiInputLocked: true,
+          heckleEligibilityInputs: {
+            commentaryEnabled: settings.commentaryEnabled,
+            currentTurnUserIdBefore: game.currentTurn,
+            currentTurnUserIdAfter: nextTurnOwner,
+            effectiveCurrentTurnOwnerAfterLocalLock: nextTurnOwner,
+            isTurnHandoffPending: false,
+            isDeferredTurnHandoffPending: shouldLockForTurnHandoff,
+            resultPhase: 'revealing',
+            roastVisible: false,
+            hasCurrentQuestion: true,
+            hasRevealedCategory: !!revealedCategory,
+          },
           localTurnHandoffDeferredUntilContinue: shouldLockForTurnHandoff,
           updatedFields: ['game_state.players'],
           dbPatch: {
@@ -3483,6 +3539,9 @@ export default function App() {
       currentTurnField: game.currentTurn,
       effectiveCurrentTurnOwner,
       isTurnHandoffPending,
+      isDeferredTurnHandoffPending,
+      currentPlayerCanAct,
+      isUiInputLocked,
       localPlayersField: players.map((player) => ({
         uid: player.uid,
         score: player.score,
@@ -3493,6 +3552,8 @@ export default function App() {
       roastVisible: !!roast,
       revealedCategoryVisible: !!revealedCategory,
       shouldShowCurrentTurnStage,
+      computed_current_player_can_act: currentPlayerCanAct,
+      uiInputLocked: isUiInputLocked,
       reasonSamePlayerCanKeepGoing:
         shouldShowCurrentTurnStage
           ? {
@@ -3501,10 +3562,13 @@ export default function App() {
             revealedCategoryVisible: !!revealedCategory,
             resultPhase,
             roastVisible: !!roast,
+            isDeferredTurnHandoffPending,
+            currentPlayerCanAct,
+            uiInputLocked: isUiInputLocked,
           }
           : null,
     });
-  }, [currentQuestion, effectiveCurrentTurnOwner, game, isTurnHandoffPending, players, revealedCategory, resultPhase, roast, shouldShowCurrentTurnStage, user?.id]);
+  }, [currentPlayerCanAct, currentQuestion, effectiveCurrentTurnOwner, game, isTurnHandoffPending, isDeferredTurnHandoffPending, isUiInputLocked, players, revealedCategory, resultPhase, roast, shouldShowCurrentTurnStage, user?.id]);
 
   useEffect(() => {
     console.info('[joinFlow] Screen guard evaluation', {
@@ -4380,7 +4444,7 @@ export default function App() {
                                 onSpinComplete={handleSpinComplete}
                                 isSpinning={isSpinning}
                                 setIsSpinning={setIsSpinning}
-                                disabled={isTurnHandoffPending || isDeferredTurnHandoffPending || resultPhase !== 'idle' || !!roast}
+                                disabled={isUiInputLocked}
                                 soundEnabled={sfxEnabled}
                               />
                             </div>
@@ -4391,7 +4455,7 @@ export default function App() {
                           <QuestionCard
                             question={currentQuestion}
                             onSelect={handleAnswer}
-                            disabled={isTurnHandoffPending || resultPhase !== 'idle' || !!roast || selectedAnswer !== null}
+                            disabled={isUiInputLocked}
                             selectedId={selectedAnswer}
                             correctId={correctAnswer}
                             timerProgress={questionTimerProgress}
