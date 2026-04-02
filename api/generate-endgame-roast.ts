@@ -32,6 +32,20 @@ function getProvider() {
   return null;
 }
 
+function summarizeContext(context: Partial<EndgameRoastGenerationContext>) {
+  return {
+    winnerName: context.winnerName ?? null,
+    loserName: context.loserName ?? null,
+    winnerScore: context.winnerScore ?? null,
+    loserScore: context.loserScore ?? null,
+    winnerTrophies: context.winnerTrophies ?? null,
+    loserTrophies: context.loserTrophies ?? null,
+    winnerRecentQuestionHistoryCount: context.winnerRecentQuestionHistory?.length ?? 0,
+    loserRecentQuestionHistoryCount: context.loserRecentQuestionHistory?.length ?? 0,
+    isSolo: context.isSolo ?? null,
+  };
+}
+
 function normalizeText(value: unknown) {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
@@ -62,25 +76,35 @@ function parseResponse(rawText: string | null | undefined): EndgameRoastResult |
     .replace(/```$/i, '')
     .trim();
 
-  try {
-    const parsed = JSON.parse(cleaned);
-    const loserRoast = normalizeText(parsed?.loserRoast);
-    const winnerCompliment = normalizeText(parsed?.winnerCompliment);
-    if (!loserRoast || !winnerCompliment) {
-      return null;
-    }
-
-    return {
-      loserRoast,
-      winnerCompliment,
-    };
-  } catch (error) {
-    console.error('[endgame-roast/api] Failed to parse provider response', {
-      error,
-      rawText: cleaned,
-    });
-    return null;
+  const candidates = [cleaned];
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    candidates.push(cleaned.slice(firstBrace, lastBrace + 1));
   }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const loserRoast = normalizeText(parsed?.loserRoast);
+      const winnerCompliment = normalizeText(parsed?.winnerCompliment);
+      if (!loserRoast || !winnerCompliment) {
+        continue;
+      }
+
+      return {
+        loserRoast,
+        winnerCompliment,
+      };
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  console.error('[endgame-roast/api] Failed to parse provider response', {
+    rawText: cleaned,
+  });
+  return null;
 }
 
 async function generateWithGemini(prompt: string) {
@@ -165,6 +189,9 @@ function sendJson(res: any, status: number, payload: EndgameRoastResult | null) 
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
+    console.warn('[endgame-roast/api] Rejected non-POST request', {
+      method: req.method,
+    });
     sendJson(res, 405, null);
     return;
   }
@@ -172,6 +199,14 @@ export default async function handler(req: any, res: any) {
   try {
     const body = parseBody(req.body) as Partial<EndgameRoastGenerationContext>;
     const provider = getProvider();
+    const requestSummary = summarizeContext(body);
+
+    console.info('[endgame-roast/api] Incoming request', {
+      provider,
+      requestSummary,
+      hasGeminiKey: !!process.env.GEMINI_API_KEY,
+      hasOpenRouterKey: !!process.env.OPENROUTER_API_KEY,
+    });
 
     if (
       body.isSolo ||
@@ -179,6 +214,10 @@ export default async function handler(req: any, res: any) {
       !body.winnerName ||
       !body.loserName
     ) {
+      console.warn('[endgame-roast/api] Request skipped: missing eligibility or required fields', {
+        provider,
+        requestSummary,
+      });
       sendJson(res, 200, null);
       return;
     }
@@ -195,6 +234,13 @@ export default async function handler(req: any, res: any) {
       isSolo: !!body.isSolo,
     }));
 
+    console.info('[endgame-roast/api] Provider completed request', {
+      provider,
+      requestSummary,
+      hasRoast: !!roast,
+      hasWinnerCompliment: !!roast?.winnerCompliment,
+      hasLoserRoast: !!roast?.loserRoast,
+    });
     sendJson(res, 200, roast);
   } catch (error) {
     console.error('[endgame-roast/api] Unhandled provider failure', {

@@ -17,6 +17,13 @@ export const heckleSchema = {
 };
 
 async function requestHecklesFromApi(context: HeckleGenerationContext) {
+  console.info('[heckles/client] Sending API request', {
+    endpoint: '/api/generate-heckles',
+    trigger: context.trigger,
+    playerName: context.playerName,
+    opponentName: context.opponentName ?? null,
+    waitingReason: context.waitingReason,
+  });
   const response = await fetch('/api/generate-heckles', {
     method: 'POST',
     headers: {
@@ -26,6 +33,12 @@ async function requestHecklesFromApi(context: HeckleGenerationContext) {
   });
 
   const data = await response.json().catch(() => ({}));
+  console.info('[heckles/client] API response received', {
+    endpoint: '/api/generate-heckles',
+    ok: response.ok,
+    status: response.status,
+    hasHeckles: Array.isArray(data?.heckles) ? data.heckles.length : null,
+  });
   if (!response.ok) {
     throw new Error(data.error || `Heckle generation failed with status ${response.status}`);
   }
@@ -34,6 +47,12 @@ async function requestHecklesFromApi(context: HeckleGenerationContext) {
 }
 
 async function requestTrashTalkFromApi(context: TrashTalkGenerationContext) {
+  console.info('[trash-talk/client] Sending API request', {
+    endpoint: '/api/generate-trash-talk',
+    event: context.event,
+    playerName: context.playerName,
+    opponentName: context.opponentName,
+  });
   const response = await fetch('/api/generate-trash-talk', {
     method: 'POST',
     headers: {
@@ -43,6 +62,12 @@ async function requestTrashTalkFromApi(context: TrashTalkGenerationContext) {
   });
 
   const data = await response.json().catch(() => ({}));
+  console.info('[trash-talk/client] API response received', {
+    endpoint: '/api/generate-trash-talk',
+    ok: response.ok,
+    status: response.status,
+    hasTrashTalk: typeof data?.trashTalk === 'string' && data.trashTalk.trim().length > 0,
+  });
   if (!response.ok) {
     throw new Error(data.error || `Trash-talk generation failed with status ${response.status}`);
   }
@@ -51,6 +76,13 @@ async function requestTrashTalkFromApi(context: TrashTalkGenerationContext) {
 }
 
 async function requestEndgameRoastFromApi(context: EndgameRoastGenerationContext) {
+  console.info('[endgame-roast/client] Sending API request', {
+    endpoint: '/api/generate-endgame-roast',
+    winnerName: context.winnerName,
+    loserName: context.loserName,
+    winnerTrophies: context.winnerTrophies,
+    loserTrophies: context.loserTrophies,
+  });
   const response = await fetch('/api/generate-endgame-roast', {
     method: 'POST',
     headers: {
@@ -60,6 +92,13 @@ async function requestEndgameRoastFromApi(context: EndgameRoastGenerationContext
   });
 
   const data = await response.json().catch(() => ({}));
+  console.info('[endgame-roast/client] API response received', {
+    endpoint: '/api/generate-endgame-roast',
+    ok: response.ok,
+    status: response.status,
+    hasWinnerCompliment: typeof data?.winnerCompliment === 'string' && data.winnerCompliment.trim().length > 0,
+    hasLoserRoast: typeof data?.loserRoast === 'string' && data.loserRoast.trim().length > 0,
+  });
   if (!response.ok) {
     throw new Error(data.error || `Endgame roast generation failed with status ${response.status}`);
   }

@@ -21,7 +21,7 @@ export const TrashTalkOverlay: React.FC<TrashTalkOverlayProps> = ({ event, messa
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[54] flex items-center justify-center p-4 sm:p-6 pointer-events-auto"
+        className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6 pointer-events-auto"
       >
         <motion.div
           aria-hidden="true"

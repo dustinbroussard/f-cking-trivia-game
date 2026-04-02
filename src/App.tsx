@@ -1056,6 +1056,10 @@ export default function App() {
 
   const triggerTrashTalk = async (event: TrashTalkEvent, contextOverrides: Partial<TrashTalkGenerationContext> = {}) => {
     if (!settings.commentaryEnabled) {
+      console.info('[trash-talk] Trigger blocked: commentary disabled', {
+        event,
+        contextOverrides,
+      });
       if (event === 'MATCH_LOSS' && lostAudioRef.current) {
         lostAudioRef.current.currentTime = 0;
         void tryPlay(lostAudioRef, true);
@@ -1085,15 +1089,40 @@ export default function App() {
       isSolo,
     };
 
+    console.info('[trash-talk] Trigger allowed', {
+      event,
+      contextSummary: {
+        playerName: context.playerName,
+        opponentName: context.opponentName,
+        playerScore: context.playerScore,
+        opponentScore: context.opponentScore,
+        scoreDelta: context.scoreDelta,
+        playerTrophies: context.playerTrophies,
+        opponentTrophies: context.opponentTrophies,
+        latestCategory: context.latestCategory ?? null,
+        recentQuestionHistoryCount: context.recentQuestionHistory?.length ?? 0,
+        isSolo: context.isSolo,
+      },
+    });
+
     const generatedMessage = await Promise.race<string | null>([
       generateTrashTalk(context),
       new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 5000)),
     ]);
 
     if (!generatedMessage) {
+      console.warn('[trash-talk] Request returned no renderable message', {
+        event,
+        playerName: context.playerName,
+        opponentName: context.opponentName,
+      });
       return;
     }
 
+    console.info('[trash-talk] Message accepted for overlay', {
+      event,
+      messageLength: generatedMessage.length,
+    });
     queueOrShowSpecialEvent({
       kind: 'TRASH_TALK',
       event,
@@ -2240,10 +2269,20 @@ export default function App() {
     }
 
     if ((game.questionIds?.length ?? 0) > 0 && questions.length === 0) {
+      console.info('[endgame-roast] Waiting for local question cache before generating', {
+        gameId: game.id,
+        expectedQuestionCount: game.questionIds?.length ?? 0,
+      });
       return;
     }
 
     if (isSolo || !game.winnerId || players.length < 2) {
+      console.info('[endgame-roast] Generation skipped', {
+        gameId: game.id,
+        isSolo,
+        winnerId: game.winnerId ?? null,
+        playersCount: players.length,
+      });
       setEndgameRoast(null);
       setIsGeneratingEndgameRoast(false);
       return;
@@ -2261,6 +2300,10 @@ export default function App() {
     const requestKey = `${game.id}:${winner.uid}:${loser.uid}:${winnerRecentQuestionHistory.length}:${loserRecentQuestionHistory.length}`;
 
     if (endgameRoastRequestKeyRef.current === requestKey) {
+      console.info('[endgame-roast] Duplicate request skipped', {
+        gameId: game.id,
+        requestKey,
+      });
       return;
     }
 
@@ -2280,15 +2323,41 @@ export default function App() {
       isSolo,
     };
 
+    console.info('[endgame-roast] Request starting', {
+      gameId: game.id,
+      requestKey,
+      payloadSummary: {
+        winnerName: requestPayload.winnerName,
+        loserName: requestPayload.loserName,
+        winnerScore: requestPayload.winnerScore,
+        loserScore: requestPayload.loserScore,
+        winnerTrophies: requestPayload.winnerTrophies,
+        loserTrophies: requestPayload.loserTrophies,
+        winnerRecentQuestionHistoryCount: requestPayload.winnerRecentQuestionHistory.length,
+        loserRecentQuestionHistoryCount: requestPayload.loserRecentQuestionHistory.length,
+      },
+    });
+
     Promise.race<EndgameRoastResult | null>([
       generateEndgameRoast(requestPayload),
       new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 7000)),
     ])
       .then((generatedRoast) => {
         if (endgameRoastRequestKeyRef.current !== requestKey) {
+          console.info('[endgame-roast] Response discarded: stale request', {
+            gameId: game.id,
+            requestKey,
+          });
           return;
         }
 
+        console.info('[endgame-roast] Response received', {
+          gameId: game.id,
+          requestKey,
+          hasRoast: !!generatedRoast,
+          hasWinnerCompliment: !!generatedRoast?.winnerCompliment,
+          hasLoserRoast: !!generatedRoast?.loserRoast,
+        });
         setEndgameRoast(generatedRoast);
       })
       .catch((error) => {

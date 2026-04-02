@@ -34,6 +34,23 @@ function getProvider() {
   return null;
 }
 
+function summarizeContext(context: Partial<TrashTalkGenerationContext>) {
+  return {
+    event: context.event ?? null,
+    playerName: context.playerName ?? null,
+    opponentName: context.opponentName ?? null,
+    playerScore: context.playerScore ?? null,
+    opponentScore: context.opponentScore ?? null,
+    scoreDelta: context.scoreDelta ?? null,
+    playerTrophies: context.playerTrophies ?? null,
+    opponentTrophies: context.opponentTrophies ?? null,
+    latestCategory: context.latestCategory ?? null,
+    hasOutcomeSummary: !!context.outcomeSummary,
+    recentQuestionHistoryCount: context.recentQuestionHistory?.length ?? 0,
+    isSolo: context.isSolo ?? null,
+  };
+}
+
 function normalizeTrashTalk(rawText: string | null | undefined) {
   if (!rawText) return null;
 
@@ -163,6 +180,9 @@ function sendJson(res: any, status: number, trashTalk: string | null) {
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
+    console.warn('[trash-talk/api] Rejected non-POST request', {
+      method: req.method,
+    });
     sendJson(res, 405, null);
     return;
   }
@@ -170,8 +190,20 @@ export default async function handler(req: any, res: any) {
   try {
     const body = parseBody(req.body) as Partial<TrashTalkGenerationContext>;
     const provider = getProvider();
+    const requestSummary = summarizeContext(body);
+
+    console.info('[trash-talk/api] Incoming request', {
+      provider,
+      requestSummary,
+      hasGeminiKey: !!process.env.GEMINI_API_KEY,
+      hasOpenRouterKey: !!process.env.OPENROUTER_API_KEY,
+    });
 
     if (body.isSolo || !provider || !body.event || !body.playerName || !body.opponentName) {
+      console.warn('[trash-talk/api] Request skipped: missing eligibility or required fields', {
+        provider,
+        requestSummary,
+      });
       sendJson(res, 200, null);
       return;
     }
@@ -192,6 +224,12 @@ export default async function handler(req: any, res: any) {
     });
 
     const trashTalk = await generateTrashTalk(provider, prompt);
+    console.info('[trash-talk/api] Provider completed request', {
+      provider,
+      requestSummary,
+      hasTrashTalk: !!trashTalk,
+      trashTalkLength: trashTalk?.length ?? 0,
+    });
     sendJson(res, 200, trashTalk);
   } catch (error) {
     console.error('[trash-talk/api] Unhandled provider failure', {
