@@ -21,14 +21,14 @@ function normalizeQuestion(row: any): TriviaQuestion {
     id: row.id,
     category: row.category,
     subcategory: row.subcategory,
-    difficulty: row.difficulty,
+    difficulty: row.difficulty_level,
     question: row.question,
     choices: row.choices ?? [],
     correctIndex: row.correct_index ?? row.correctIndex ?? 0,
     explanation: row.explanation,
     tags: row.tags ?? [],
     used: row.used,
-    status: row.status,
+    status: row.validation_status,
     presentation: row.presentation ?? {},
     sourceType: row.source_type ?? row.sourceType ?? 'ai',
     createdAt: row.created_at ?? row.createdAt,
@@ -40,10 +40,10 @@ async function fetchApprovedCount(filters?: { category?: string; difficulty?: st
   let request = supabase
     .from('questions')
     .select('*', { count: 'exact', head: true })
-    .eq('status', 'approved');
+    .eq('validation_status', 'approved');
 
   if (filters?.category) request = request.eq('category', filters.category);
-  if (filters?.difficulty) request = request.eq('difficulty', filters.difficulty);
+  if (filters?.difficulty) request = request.eq('difficulty_level', filters.difficulty);
 
   const { count, error } = await request;
   if (error) throw error;
@@ -102,9 +102,9 @@ export const QuestionBankAdmin: React.FC<QuestionBankAdminProps> = ({ isOpen, on
       const { data, error } = await supabase
         .from('questions')
         .select('*')
-        .eq('status', 'approved')
+        .eq('validation_status', 'approved')
         .eq('category', selectedCategory)
-        .eq('difficulty', selectedDifficulty)
+        .eq('difficulty_level', selectedDifficulty)
         .order('created_at', { ascending: false })
         .limit(8);
 

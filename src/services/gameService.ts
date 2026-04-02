@@ -108,6 +108,216 @@ function sanitizeGameResult(value: any) {
   };
 }
 
+type NormalizedGameSnapshot = {
+  id: string | null;
+  updatedAt: string | null;
+  updatedAtMs: number | null;
+  status: string | null;
+  currentTurn: string | null;
+  currentQuestionId: string | null;
+  playerIds: string[];
+  scores: Record<string, number>;
+};
+
+type FreshnessComparison =
+  | {
+      decision: 'accept';
+      reason: 'no-current-snapshot' | 'incoming-newer-updated_at' | 'same-updated_at-different-authoritative-fields' | 'missing-updated_at-but-authoritative-fields-differ';
+    }
+  | {
+      decision: 'ignore';
+      reason: 'incoming-older-updated_at' | 'same-updated_at-equivalent-authoritative-fields' | 'missing-updated_at-equivalent-authoritative-fields';
+    };
+
+const FALLBACK_REFRESH_INTERVAL_MS = 3000;
+const FALLBACK_REFRESH_MIN_GAP_MS = 15000;
+const FALLBACK_REFRESH_IDLE_AFTER_ACCEPT_MS = 12000;
+
+function hasOwn(object: unknown, key: string) {
+  return !!object && typeof object === 'object' && Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function normalizeOptionalString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizePlayerIdsForComparison(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return [...new Set(value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0))].sort();
+}
+
+function normalizeScoresForComparison(players: unknown): Record<string, number> {
+  if (!Array.isArray(players)) {
+    return {};
+  }
+
+  return players.reduce<Record<string, number>>((scores, player) => {
+    if (!player || typeof player !== 'object' || typeof player.uid !== 'string') {
+      return scores;
+    }
+
+    scores[player.uid] = typeof player.score === 'number' ? player.score : 0;
+    return scores;
+  }, {});
+}
+
+export function normalizeGameSnapshot(game: any): NormalizedGameSnapshot {
+  const rawState = game?.game_state ?? game?.gameState;
+  const state = normalizeStoredGameState(rawState);
+  const updatedAtRaw = game?.updated_at ?? game?.updatedAt ?? null;
+  const updatedAt = normalizeOptionalString(updatedAtRaw);
+  const updatedAtMs = updatedAt ? new Date(updatedAt).getTime() : null;
+  const playerIds = normalizePlayerIdsForComparison(game?.player_ids ?? game?.playerIds ?? state.playerIds);
+  const currentQuestionId = normalizeOptionalString(
+    game?.current_question_id ??
+      game?.currentQuestionId ??
+      state.currentQuestionId ??
+      null
+  );
+
+  return {
+    id: normalizeOptionalString(game?.id ?? null),
+    updatedAt,
+    updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : null,
+    status: normalizeOptionalString(game?.status ?? null),
+    currentTurn: normalizeOptionalString(game?.current_turn_user_id ?? game?.currentTurn ?? null),
+    currentQuestionId,
+    playerIds,
+    scores: normalizeScoresForComparison(state.players ?? game?.players),
+  };
+}
+
+function areScoresEquivalent(left: Record<string, number>, right: Record<string, number>) {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+
+  return leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key]);
+}
+
+function areNormalizedSnapshotsEquivalent(left: NormalizedGameSnapshot, right: NormalizedGameSnapshot) {
+  return (
+    left.id === right.id &&
+    left.status === right.status &&
+    left.currentTurn === right.currentTurn &&
+    left.currentQuestionId === right.currentQuestionId &&
+    left.playerIds.length === right.playerIds.length &&
+    left.playerIds.every((playerId, index) => playerId === right.playerIds[index]) &&
+    areScoresEquivalent(left.scores, right.scores)
+  );
+}
+
+export function compareGameFreshness(
+  incoming: NormalizedGameSnapshot,
+  current: NormalizedGameSnapshot | null
+): FreshnessComparison {
+  if (!current) {
+    return {
+      decision: 'accept',
+      reason: 'no-current-snapshot',
+    };
+  }
+
+  if (incoming.updatedAtMs !== null && current.updatedAtMs !== null) {
+    if (incoming.updatedAtMs < current.updatedAtMs) {
+      return {
+        decision: 'ignore',
+        reason: 'incoming-older-updated_at',
+      };
+    }
+
+    if (incoming.updatedAtMs > current.updatedAtMs) {
+      return {
+        decision: 'accept',
+        reason: 'incoming-newer-updated_at',
+      };
+    }
+
+    return areNormalizedSnapshotsEquivalent(incoming, current)
+      ? {
+          decision: 'ignore',
+          reason: 'same-updated_at-equivalent-authoritative-fields',
+        }
+      : {
+          decision: 'accept',
+          reason: 'same-updated_at-different-authoritative-fields',
+        };
+  }
+
+  return areNormalizedSnapshotsEquivalent(incoming, current)
+    ? {
+        decision: 'ignore',
+        reason: 'missing-updated_at-equivalent-authoritative-fields',
+      }
+    : {
+        decision: 'accept',
+        reason: 'missing-updated_at-but-authoritative-fields-differ',
+      };
+}
+
+function mergeGameRowsPreservingCanonical(currentRow: any | null, incomingRow: any) {
+  if (!currentRow) {
+    return incomingRow;
+  }
+
+  const incomingState = incomingRow?.game_state;
+  const currentState = currentRow?.game_state;
+  const mergedState =
+    incomingState === null
+      ? null
+      : incomingState && typeof incomingState === 'object'
+      ? {
+          ...(currentState && typeof currentState === 'object' ? currentState : {}),
+          ...incomingState,
+        }
+      : hasOwn(incomingRow, 'game_state')
+        ? incomingState
+        : currentState;
+
+  const incomingResult = incomingRow?.result;
+  const currentResult = currentRow?.result;
+  const mergedResult =
+    incomingResult === null
+      ? null
+      : incomingResult && typeof incomingResult === 'object'
+      ? {
+          ...(currentResult && typeof currentResult === 'object' ? currentResult : {}),
+          ...incomingResult,
+        }
+      : hasOwn(incomingRow, 'result')
+        ? incomingResult
+        : currentResult;
+
+  return {
+    ...currentRow,
+    ...incomingRow,
+    player_ids: hasOwn(incomingRow, 'player_ids') ? incomingRow?.player_ids : currentRow?.player_ids,
+    game_state: mergedState,
+    result: mergedResult,
+    updated_at: hasOwn(incomingRow, 'updated_at') ? incomingRow?.updated_at : currentRow?.updated_at,
+    created_at: hasOwn(incomingRow, 'created_at') ? incomingRow?.created_at : currentRow?.created_at,
+  };
+}
+
+function isMissingAuthoritativeFields(row: any) {
+  if (!row || typeof row !== 'object') {
+    return true;
+  }
+
+  const snapshot = normalizeGameSnapshot(row);
+  return !snapshot.id || !snapshot.status || !snapshot.updatedAt;
+}
+
 export function mapPostgresGameToState(row: any): GameState {
   const state = normalizeStoredGameState(row.game_state);
   const playerIds = Array.isArray(row.player_ids)
@@ -122,8 +332,8 @@ export function mapPostgresGameToState(row: any): GameState {
     hostId: state.hostId,
     playerIds,
     players: state.players,
-    currentTurn: row.current_turn_user_id ?? null,
-    winnerId: row.winner_user_id ?? null,
+    currentTurn: row.current_turn_profile_id ?? row.current_turn_user_id ?? null,
+    winnerId: row.winner_profile_id ?? row.winner_user_id ?? null,
     gameMode: row.game_mode || undefined,
     gameState: state,
     result,
@@ -135,7 +345,7 @@ export function mapPostgresGameToState(row: any): GameState {
     answers: state.answers,
     finalScores: result.finalScores || {},
     categoriesUsed: result.categoriesUsed || [],
-    lastUpdated: new Date(row.updated_at).getTime(),
+    lastUpdated: new Date(row.last_updated_at || row.updated_at || row.last_updated).getTime(),
     createdAt: new Date(row.created_at).getTime(),
   };
 }
@@ -200,12 +410,12 @@ function normalizeGamePatch(
   return {
     status: patch.status ?? currentRow.status,
     game_mode: patch.game_mode ?? patch.gameMode ?? currentRow.game_mode,
-    winner_user_id: patch.winner_id ?? patch.winnerId ?? currentRow.winner_user_id,
-    current_turn_user_id: patch.current_turn ?? patch.currentTurn ?? currentRow.current_turn_user_id,
+    winner_profile_id: patch.winner_id ?? patch.winnerId ?? currentRow.winner_profile_id ?? currentRow.winner_user_id,
+    current_turn_profile_id: patch.current_turn ?? patch.currentTurn ?? currentRow.current_turn_profile_id ?? currentRow.current_turn_user_id,
     player_ids: nextState.playerIds,
     game_state: nextState,
     result: nextResult,
-    updated_at: nowIsoString(),
+    last_updated_at: nowIsoString(),
   };
 }
 
@@ -222,7 +432,59 @@ function logGamesUpdatePayload(triggeredBy: string, gameId: string, payload: Rec
 }
 
 export const subscribeToGame = (gameId: string, callback: (game: GameState) => void) => {
-  let lastSnapshotSignature: string | null = null;
+  let lastAcceptedSnapshot: NormalizedGameSnapshot | null = null;
+  let lastAcceptedRow: any | null = null;
+  let lastAcceptedAt = 0;
+  let lastRealtimeEventAt = 0;
+  let lastFallbackRefreshAt = 0;
+  let fallbackRefreshInFlight = false;
+  let isSubscribed = false;
+
+  const runFallbackRefresh = (reason: string) => {
+    if (fallbackRefreshInFlight) {
+      console.info('[subscribeToGame] Fallback refresh skipped', {
+        gameId,
+        reason,
+        decision: 'skip',
+        skipReason: 'fallback-refresh-already-in-flight',
+      });
+      return;
+    }
+
+    const now = Date.now();
+    if (lastFallbackRefreshAt > 0 && now - lastFallbackRefreshAt < FALLBACK_REFRESH_MIN_GAP_MS) {
+      console.info('[subscribeToGame] Fallback refresh skipped', {
+        gameId,
+        reason,
+        decision: 'skip',
+        skipReason: 'fallback-refresh-rate-limited',
+        lastFallbackRefreshAt,
+        msSinceLastFallbackRefresh: now - lastFallbackRefreshAt,
+      });
+      return;
+    }
+
+    fallbackRefreshInFlight = true;
+    lastFallbackRefreshAt = now;
+
+    console.info('[subscribeToGame] Fallback refresh started', {
+      gameId,
+      reason,
+      decision: 'refresh',
+    });
+
+    fetchGameRow(gameId)
+      .then((row) => {
+        emitGameRow(row, 'subscribe:fallbackRefresh');
+      })
+      .catch((error) => {
+        logSupabaseError('games', 'select', error, { gameId, purpose: 'subscribeToGameFallbackRefresh', reason });
+      })
+      .finally(() => {
+        fallbackRefreshInFlight = false;
+      });
+  };
+
   const emitGameRow = (row: any, source: string) => {
     if (!row) {
       console.warn('[subscribeToGame] No game row available', {
@@ -232,42 +494,49 @@ export const subscribeToGame = (gameId: string, callback: (game: GameState) => v
       return;
     }
 
-    const mappedGame = mapPostgresGameToState(row);
-    const signature = JSON.stringify({
-      status: mappedGame.status,
-      currentTurn: mappedGame.currentTurn,
-      playerIds: mappedGame.playerIds,
-      players: mappedGame.players.map((player) => ({
-        uid: player.uid,
-        score: player.score,
-        streak: player.streak,
-      })),
-    });
+    if (source.startsWith('realtime:')) {
+      lastRealtimeEventAt = Date.now();
+    }
 
-    console.info('[subscribeToGame] Game snapshot received', {
-      gameId,
-      source,
-      fullGameRecord: row,
-      fieldsUsedForUi: {
-        status: mappedGame.status,
-        currentTurn: mappedGame.currentTurn,
-        playerIds: mappedGame.playerIds,
-        playersCount: mappedGame.players.length,
-      },
-      staleComparedToLastSnapshot: lastSnapshotSignature === signature,
-    });
-
-    if (lastSnapshotSignature === signature) {
+    if (isMissingAuthoritativeFields(row)) {
+      console.warn('[subscribeToGame] Snapshot missing authoritative fields', {
+        gameId,
+        source,
+        decision: 'fallback-refresh',
+        missingAuthoritativeFields: true,
+        incomingSnapshot: normalizeGameSnapshot(row),
+      });
+      runFallbackRefresh(`missing-authoritative-fields:${source}`);
       return;
     }
 
-    lastSnapshotSignature = signature;
+    const mergedRow = mergeGameRowsPreservingCanonical(lastAcceptedRow, row);
+    const incomingSnapshot = normalizeGameSnapshot(mergedRow);
+    const comparison = compareGameFreshness(incomingSnapshot, lastAcceptedSnapshot);
+
+    console.info('[subscribeToGame] Snapshot decision', {
+      gameId,
+      source,
+      decision: comparison.decision,
+      reason: comparison.reason,
+      incomingSnapshot,
+      currentSnapshot: lastAcceptedSnapshot,
+    });
+
+    if (comparison.decision === 'ignore') {
+      return;
+    }
+
+    const mappedGame = mapPostgresGameToState(mergedRow);
+    lastAcceptedRow = mergedRow;
+    lastAcceptedSnapshot = incomingSnapshot;
+    lastAcceptedAt = Date.now();
     callback(mappedGame);
   };
 
   console.info('[subscribeToGame] Starting games subscription', {
     gameId,
-    sourceOfTruthFields: ['status', 'current_turn_user_id', 'player_ids', 'game_state.players'],
+    sourceOfTruthFields: ['id', 'updated_at', 'status', 'current_turn_user_id', 'game_state.currentQuestionId', 'player_ids', 'game_state.players[].score'],
   });
 
   const channel = supabase
@@ -295,9 +564,11 @@ export const subscribeToGame = (gameId: string, callback: (game: GameState) => v
       });
 
       if (status !== 'SUBSCRIBED') {
+        isSubscribed = false;
         return;
       }
 
+      isSubscribed = true;
       fetchGameRow(gameId).then((row) => {
         emitGameRow(row, 'subscribe:initFetch');
       }).catch((error) => {
@@ -306,14 +577,19 @@ export const subscribeToGame = (gameId: string, callback: (game: GameState) => v
     });
 
   const fallbackRefreshInterval = window.setInterval(() => {
-    fetchGameRow(gameId)
-      .then((row) => {
-        emitGameRow(row, 'subscribe:fallbackRefresh');
-      })
-      .catch((error) => {
-        logSupabaseError('games', 'select', error, { gameId, purpose: 'subscribeToGameFallbackRefresh' });
-      });
-  }, 3000);
+    const now = Date.now();
+    const referenceTime = Math.max(lastAcceptedAt, lastRealtimeEventAt);
+
+    if (!isSubscribed) {
+      return;
+    }
+
+    if (referenceTime > 0 && now - referenceTime < FALLBACK_REFRESH_IDLE_AFTER_ACCEPT_MS) {
+      return;
+    }
+
+    runFallbackRefresh('watchdog-idle');
+  }, FALLBACK_REFRESH_INTERVAL_MS);
 
   return () => {
     window.clearInterval(fallbackRefreshInterval);
@@ -344,24 +620,24 @@ export async function createGame(
     id: string;
     status?: string;
     game_mode?: string | null;
-    winner_user_id?: string | null;
-    current_turn_user_id?: string | null;
+    winner_profile_id?: string | null;
+    current_turn_profile_id?: string | null;
     player_ids?: string[];
     game_state?: Record<string, unknown>;
     result?: Record<string, unknown>;
     created_at: string;
-    updated_at: string;
+    last_updated_at: string;
   } = {
     id: gameId,
     status: isSolo ? 'active' : 'waiting',
     game_mode: isSolo ? 'solo' : 'multiplayer',
-    winner_user_id: null,
-    current_turn_user_id: hostId,
+    winner_profile_id: null,
+    current_turn_profile_id: hostId,
     player_ids: initialState.playerIds,
     game_state: initialState as unknown as Record<string, unknown>,
     result: {},
     created_at: now,
-    updated_at: now,
+    last_updated_at: now,
   };
 
   console.info('[Supabase] insert games payload', {
@@ -432,7 +708,7 @@ export async function joinGameById(gameId: string, userId: string, displayName: 
     .from('games')
     .update({
       status: playerIds.length >= 2 ? 'active' : game.status,
-      current_turn_user_id: game.current_turn_user_id || state.hostId || userId,
+      current_turn_profile_id: game.current_turn_profile_id || game.current_turn_user_id || state.hostId || userId,
       player_ids: playerIds,
       game_state: {
         ...state,
@@ -440,7 +716,7 @@ export async function joinGameById(gameId: string, userId: string, displayName: 
         playerIds,
         players,
       },
-      updated_at: nowIsoString(),
+      last_updated_at: nowIsoString(),
     })
     .eq('id', gameId)
     .select('*')
@@ -510,7 +786,7 @@ export async function updatePlayerActivity(gameId: string, userId: string, isRes
     .from('games')
     .update({
       game_state: { ...state, players },
-      updated_at: nowIsoString(),
+      last_updated_at: nowIsoString(),
     })
     .eq('id', gameId);
 
@@ -525,7 +801,7 @@ export async function abandonGame(gameId: string) {
     .from('games')
     .update({
       status: 'abandoned',
-      updated_at: nowIsoString(),
+      last_updated_at: nowIsoString(),
     })
     .eq('id', gameId);
 
@@ -547,7 +823,7 @@ export async function persistQuestionsToGame(gameId: string, questionIds: string
     .from('games')
     .update({
       game_state: { ...state, questionIds: nextQuestionIds },
-      updated_at: nowIsoString(),
+      last_updated_at: nowIsoString(),
     })
     .eq('id', gameId);
 
@@ -569,7 +845,7 @@ export async function replaceQuestionsInGame(gameId: string, questionIds: string
     .from('games')
     .update({
       game_state: { ...state, questionIds: nextQuestionIds },
-      updated_at: nowIsoString(),
+      last_updated_at: nowIsoString(),
     })
     .eq('id', gameId);
 
@@ -600,7 +876,7 @@ export async function setActiveGameQuestion(
       currentQuestionIndex: questionIndex,
       currentQuestionStartedAt: startedAt,
     },
-    updated_at: nowIsoString(),
+    last_updated_at: nowIsoString(),
   };
   logGamesUpdatePayload('setActiveGameQuestion', gameId, updatePayload);
   const { error } = await supabase
@@ -651,7 +927,7 @@ export async function clearActiveGameQuestion(gameId: string) {
         currentQuestionCategory: null,
         currentQuestionStartedAt: null,
       },
-      updated_at: nowIsoString(),
+      last_updated_at: nowIsoString(),
     })
     .eq('id', gameId);
 
@@ -970,7 +1246,7 @@ export async function getPastGames(userId: string): Promise<GameState[]> {
     .from('games')
     .select('*')
     .eq('status', 'completed')
-    .order('updated_at', { ascending: false })
+    .order('last_updated_at', { ascending: false })
     .limit(50);
 
   if (error) {

@@ -65,7 +65,7 @@ async function loadMultiplayerGameStats(uid: string) {
 
   const [{ count: completedGames, error: completedError }, { count: wins, error: winsError }] = await Promise.all([
     baseQuery(),
-    baseQuery().eq('winner_user_id', uid),
+    baseQuery().or(`winner_profile_id.eq.${uid},winner_user_id.eq.${uid}`),
   ]);
 
   if (completedError && !isMissingTableError(completedError)) {
@@ -352,11 +352,12 @@ async function loadProfilesByIds(ids: string[]) {
 async function loadCompletedGamesForUser(uid: string): Promise<RecentCompletedGame[]> {
   const { data, error } = await supabase
     .from('games')
-    .select('id, player_ids, winner_user_id, game_mode, status, result, completed_at, updated_at, created_at')
+    .select('id, player_ids, winner_profile_id, winner_user_id, game_mode, status, result, completed_at, last_updated_at, updated_at, created_at')
     .eq('status', 'completed')
     .eq('game_mode', 'multiplayer')
     .contains('player_ids', [uid])
     .order('completed_at', { ascending: false, nullsFirst: false })
+    .order('last_updated_at', { ascending: false })
     .order('updated_at', { ascending: false })
     .limit(12);
 
@@ -399,16 +400,14 @@ async function loadCompletedGamesForUser(uid: string): Promise<RecentCompletedGa
           nickname: profile?.nickname || 'Player',
         };
       }),
-      winnerId: typeof row.winner_user_id === 'string' ? row.winner_user_id : null,
+      winnerId: (row.winner_profile_id || row.winner_user_id),
       finalScores,
       categoriesUsed,
       completedAt: row.completed_at
         ? new Date(row.completed_at).getTime()
-        : row.updated_at
-          ? new Date(row.updated_at).getTime()
-          : row.created_at
-            ? new Date(row.created_at).getTime()
-            : Date.now(),
+        : (row.last_updated_at || row.updated_at || row.created_at)
+          ? new Date(row.last_updated_at || row.updated_at || row.created_at).getTime()
+          : Date.now(),
       status: 'completed',
       opponentIds: playerIds.filter((playerId) => playerId !== uid),
     };
