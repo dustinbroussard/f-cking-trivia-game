@@ -19,6 +19,34 @@ const PRECACHE_ASSETS = [
   'spin.mp3',
 ];
 
+function shouldCacheResponse(request, response) {
+  return (
+    request.method === 'GET' &&
+    !request.headers.has('range') &&
+    response &&
+    response.ok &&
+    response.status !== 206 &&
+    response.status === 200 &&
+    response.type === 'basic' &&
+    response.type !== 'opaque' &&
+    response.type !== 'opaqueredirect' &&
+    response.type !== 'error'
+  );
+}
+
+async function putInCache(request, response) {
+  if (!shouldCacheResponse(request, response)) {
+    return;
+  }
+
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(request, response.clone());
+  } catch (error) {
+    console.warn('[sw] cache.put skipped:', request.url, error);
+  }
+}
+
 async function precacheAssets() {
   const cache = await caches.open(CACHE_NAME);
 
@@ -40,10 +68,7 @@ async function cacheFirst(request) {
   }
 
   const response = await fetch(request);
-  if (response && response.ok && response.type === 'basic') {
-    const cache = await caches.open(CACHE_NAME);
-    cache.put(request, response.clone());
-  }
+  await putInCache(request, response);
   return response;
 }
 
@@ -52,9 +77,7 @@ async function staleWhileRevalidate(request) {
   const cachedResponse = await cache.match(request);
   const networkPromise = fetch(request)
     .then((networkResponse) => {
-      if (networkResponse && networkResponse.ok && networkResponse.type === 'basic') {
-        cache.put(request, networkResponse.clone());
-      }
+      void putInCache(request, networkResponse);
       return networkResponse;
     })
     .catch(() => cachedResponse);
@@ -79,6 +102,10 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') {
+    return;
+  }
+
+  if (event.request.headers.has('range')) {
     return;
   }
 

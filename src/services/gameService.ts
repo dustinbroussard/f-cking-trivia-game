@@ -10,6 +10,11 @@ import {
   nowIsoString,
 } from './supabaseUtils';
 import { dedupeQuestionsByIdentity, mapQuestionRowToTriviaQuestion } from './questionRepository';
+import {
+  GAME_REQUIRED_SNAPSHOT_FIELDS,
+  GAME_SNAPSHOT_SOURCE_OF_TRUTH_FIELDS,
+  GAMES_SELECT_COLUMNS,
+} from './gamesQuery';
 
 function createGameId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -108,6 +113,22 @@ function sanitizeGameResult(value: any) {
   };
 }
 
+function normalizeFinalScores(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return value as Record<string, number>;
+}
+
+function normalizeCategoriesUsed(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((entry): entry is string => typeof entry === 'string');
+}
+
 type NormalizedGameSnapshot = {
   id: string | null;
   updatedAt: string | null;
@@ -172,7 +193,7 @@ function normalizeScoresForComparison(players: unknown): Record<string, number> 
 export function normalizeGameSnapshot(game: any): NormalizedGameSnapshot {
   const rawState = game?.game_state ?? game?.gameState;
   const state = normalizeStoredGameState(rawState);
-  const updatedAtRaw = game?.updated_at ?? game?.updatedAt ?? null;
+  const updatedAtRaw = game?.last_updated_at ?? game?.updated_at ?? game?.last_updated ?? game?.updatedAt ?? null;
   const updatedAt = normalizeOptionalString(updatedAtRaw);
   const updatedAtMs = updatedAt ? new Date(updatedAt).getTime() : null;
   const playerIds = normalizePlayerIdsForComparison(game?.player_ids ?? game?.playerIds ?? state.playerIds);
@@ -188,7 +209,7 @@ export function normalizeGameSnapshot(game: any): NormalizedGameSnapshot {
     updatedAt,
     updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : null,
     status: normalizeOptionalString(game?.status ?? null),
-    currentTurn: normalizeOptionalString(game?.current_turn_user_id ?? game?.currentTurn ?? null),
+    currentTurn: normalizeOptionalString(game?.current_turn_profile_id ?? game?.currentTurn ?? null),
     currentQuestionId,
     playerIds,
     scores: normalizeScoresForComparison(state.players ?? game?.players),
@@ -304,18 +325,26 @@ function mergeGameRowsPreservingCanonical(currentRow: any | null, incomingRow: a
     player_ids: hasOwn(incomingRow, 'player_ids') ? incomingRow?.player_ids : currentRow?.player_ids,
     game_state: mergedState,
     result: mergedResult,
+    last_updated_at: hasOwn(incomingRow, 'last_updated_at') ? incomingRow?.last_updated_at : currentRow?.last_updated_at,
     updated_at: hasOwn(incomingRow, 'updated_at') ? incomingRow?.updated_at : currentRow?.updated_at,
     created_at: hasOwn(incomingRow, 'created_at') ? incomingRow?.created_at : currentRow?.created_at,
   };
 }
 
-function isMissingAuthoritativeFields(row: any) {
-  if (!row || typeof row !== 'object') {
-    return true;
-  }
-
+function getMissingRequiredSnapshotFields(row: any) {
   const snapshot = normalizeGameSnapshot(row);
-  return !snapshot.id || !snapshot.status || !snapshot.updatedAt;
+  return GAME_REQUIRED_SNAPSHOT_FIELDS.filter((field) => {
+    switch (field) {
+      case 'id':
+        return !snapshot.id;
+      case 'status':
+        return !snapshot.status;
+      case 'last_updated_at':
+        return !snapshot.updatedAt;
+      default:
+        return false;
+    }
+  });
 }
 
 export function mapPostgresGameToState(row: any): GameState {
@@ -324,6 +353,12 @@ export function mapPostgresGameToState(row: any): GameState {
     ? row.player_ids.filter((entry: unknown): entry is string => typeof entry === 'string')
     : state.playerIds;
   const result = sanitizeGameResult(row.result);
+  const finalScores = Object.keys(result.finalScores || {}).length > 0
+    ? result.finalScores
+    : normalizeFinalScores(row.final_scores);
+  const categoriesUsed = (result.categoriesUsed || []).length > 0
+    ? result.categoriesUsed
+    : normalizeCategoriesUsed(row.categories_used);
 
   return {
     id: row.id,
@@ -332,26 +367,34 @@ export function mapPostgresGameToState(row: any): GameState {
     hostId: state.hostId,
     playerIds,
     players: state.players,
-    currentTurn: row.current_turn_profile_id ?? row.current_turn_user_id ?? null,
-    winnerId: row.winner_profile_id ?? row.winner_user_id ?? null,
+    currentTurn: row.current_turn_profile_id ?? null,
+    winnerId: row.winner_profile_id ?? null,
     gameMode: row.game_mode || undefined,
     gameState: state,
-    result,
+    result: {
+      ...result,
+      finalScores,
+      categoriesUsed,
+    },
     currentQuestionId: state.currentQuestionId ?? null,
     currentQuestionCategory: state.currentQuestionCategory ?? null,
     currentQuestionIndex: state.currentQuestionIndex,
     currentQuestionStartedAt: state.currentQuestionStartedAt ?? null,
     questionIds: state.questionIds,
     answers: state.answers,
-    finalScores: result.finalScores || {},
-    categoriesUsed: result.categoriesUsed || [],
+    finalScores,
+    categoriesUsed,
     lastUpdated: new Date(row.last_updated_at || row.updated_at || row.last_updated).getTime(),
     createdAt: new Date(row.created_at).getTime(),
   };
 }
 
-async function fetchGameRow(gameId: string) {
-  const { data, error } = await supabase.from('games').select('*').eq('id', gameId).maybeSingle();
+async function fetchGameRow(gameId: string): Promise<any | null> {
+  const { data, error }: { data: any; error: any } = await supabase
+    .from('games')
+    .select(GAMES_SELECT_COLUMNS)
+    .eq('id', gameId)
+    .maybeSingle();
 
   if (error) {
     if (isMissingRowError(error)) {
@@ -410,8 +453,8 @@ function normalizeGamePatch(
   return {
     status: patch.status ?? currentRow.status,
     game_mode: patch.game_mode ?? patch.gameMode ?? currentRow.game_mode,
-    winner_profile_id: patch.winner_id ?? patch.winnerId ?? currentRow.winner_profile_id ?? currentRow.winner_user_id,
-    current_turn_profile_id: patch.current_turn ?? patch.currentTurn ?? currentRow.current_turn_profile_id ?? currentRow.current_turn_user_id,
+    winner_profile_id: patch.winner_id ?? patch.winnerId ?? currentRow.winner_profile_id,
+    current_turn_profile_id: patch.current_turn ?? patch.currentTurn ?? currentRow.current_turn_profile_id,
     player_ids: nextState.playerIds,
     game_state: nextState,
     result: nextResult,
@@ -498,19 +541,23 @@ export const subscribeToGame = (gameId: string, callback: (game: GameState) => v
       lastRealtimeEventAt = Date.now();
     }
 
-    if (isMissingAuthoritativeFields(row)) {
+    const mergedRow = mergeGameRowsPreservingCanonical(lastAcceptedRow, row);
+    const missingRequiredFields = getMissingRequiredSnapshotFields(mergedRow);
+
+    if (missingRequiredFields.length > 0) {
       console.warn('[subscribeToGame] Snapshot missing authoritative fields', {
         gameId,
         source,
         decision: 'fallback-refresh',
-        missingAuthoritativeFields: true,
+        missingRequiredFields,
+        requiredSnapshotFields: GAME_REQUIRED_SNAPSHOT_FIELDS,
         incomingSnapshot: normalizeGameSnapshot(row),
+        mergedSnapshot: normalizeGameSnapshot(mergedRow),
       });
       runFallbackRefresh(`missing-authoritative-fields:${source}`);
       return;
     }
 
-    const mergedRow = mergeGameRowsPreservingCanonical(lastAcceptedRow, row);
     const incomingSnapshot = normalizeGameSnapshot(mergedRow);
     const comparison = compareGameFreshness(incomingSnapshot, lastAcceptedSnapshot);
 
@@ -536,7 +583,9 @@ export const subscribeToGame = (gameId: string, callback: (game: GameState) => v
 
   console.info('[subscribeToGame] Starting games subscription', {
     gameId,
-    sourceOfTruthFields: ['id', 'updated_at', 'status', 'current_turn_user_id', 'game_state.currentQuestionId', 'player_ids', 'game_state.players[].score'],
+    sourceOfTruthFields: GAME_SNAPSHOT_SOURCE_OF_TRUTH_FIELDS,
+    requiredSnapshotFields: GAME_REQUIRED_SNAPSHOT_FIELDS,
+    selectColumns: GAMES_SELECT_COLUMNS,
   });
 
   const channel = supabase
@@ -646,10 +695,10 @@ export async function createGame(
     payload: insertPayload,
   });
 
-  const { data, error } = await supabase
+  const { data, error }: { data: any; error: any } = await supabase
     .from('games')
     .insert(insertPayload)
-    .select('*')
+    .select(GAMES_SELECT_COLUMNS)
     .single();
 
   if (error) {
@@ -704,11 +753,11 @@ export async function joinGameById(gameId: string, userId: string, displayName: 
         } as Player,
       ];
 
-  const { data, error } = await supabase
+  const { data, error }: { data: any; error: any } = await supabase
     .from('games')
     .update({
       status: playerIds.length >= 2 ? 'active' : game.status,
-      current_turn_profile_id: game.current_turn_profile_id || game.current_turn_user_id || state.hostId || userId,
+      current_turn_profile_id: game.current_turn_profile_id || state.hostId || userId,
       player_ids: playerIds,
       game_state: {
         ...state,
@@ -719,7 +768,7 @@ export async function joinGameById(gameId: string, userId: string, displayName: 
       last_updated_at: nowIsoString(),
     })
     .eq('id', gameId)
-    .select('*')
+    .select(GAMES_SELECT_COLUMNS)
     .single();
 
   if (error) {
@@ -1242,10 +1291,11 @@ export async function getGameQuestions(gameId: string): Promise<TriviaQuestion[]
 }
 
 export async function getPastGames(userId: string): Promise<GameState[]> {
-  const { data, error } = await supabase
+  const { data, error }: { data: any[] | null; error: any } = await supabase
     .from('games')
-    .select('*')
+    .select(GAMES_SELECT_COLUMNS)
     .eq('status', 'completed')
+    .contains('player_ids', [userId])
     .order('last_updated_at', { ascending: false })
     .limit(50);
 

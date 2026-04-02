@@ -15,6 +15,7 @@ import {
   logSupabaseError,
   nowIsoString,
 } from './supabaseUtils';
+import { GAMES_SELECT_COLUMNS, GAMES_WINNER_COLUMN } from './gamesQuery';
 
 const AVATAR_STORAGE_BUCKET = 'avatars';
 const AVATAR_STORAGE_EXTENSION = 'jpg';
@@ -65,7 +66,7 @@ async function loadMultiplayerGameStats(uid: string) {
 
   const [{ count: completedGames, error: completedError }, { count: wins, error: winsError }] = await Promise.all([
     baseQuery(),
-    baseQuery().or(`winner_profile_id.eq.${uid},winner_user_id.eq.${uid}`),
+    baseQuery().eq(GAMES_WINNER_COLUMN, uid),
   ]);
 
   if (completedError && !isMissingTableError(completedError)) {
@@ -350,15 +351,14 @@ async function loadProfilesByIds(ids: string[]) {
 }
 
 async function loadCompletedGamesForUser(uid: string): Promise<RecentCompletedGame[]> {
-  const { data, error } = await supabase
+  const { data, error }: { data: any[] | null; error: any } = await supabase
     .from('games')
-    .select('id, player_ids, winner_profile_id, winner_user_id, game_mode, status, result, completed_at, last_updated_at, updated_at, created_at')
+    .select(GAMES_SELECT_COLUMNS)
     .eq('status', 'completed')
     .eq('game_mode', 'multiplayer')
     .contains('player_ids', [uid])
     .order('completed_at', { ascending: false, nullsFirst: false })
     .order('last_updated_at', { ascending: false })
-    .order('updated_at', { ascending: false })
     .limit(12);
 
   if (error) {
@@ -386,9 +386,13 @@ async function loadCompletedGamesForUser(uid: string): Promise<RecentCompletedGa
     const finalScores =
       result.finalScores && typeof result.finalScores === 'object'
         ? result.finalScores as Record<string, number>
+        : row.final_scores && typeof row.final_scores === 'object'
+          ? row.final_scores as Record<string, number>
         : {};
     const categoriesUsed = Array.isArray(result.categoriesUsed)
       ? result.categoriesUsed.filter((entry: unknown): entry is string => typeof entry === 'string')
+      : Array.isArray(row.categories_used)
+        ? row.categories_used.filter((entry: unknown): entry is string => typeof entry === 'string')
       : [];
 
     return {
@@ -400,13 +404,13 @@ async function loadCompletedGamesForUser(uid: string): Promise<RecentCompletedGa
           nickname: profile?.nickname || 'Player',
         };
       }),
-      winnerId: (row.winner_profile_id || row.winner_user_id),
+      winnerId: row.winner_profile_id || null,
       finalScores,
       categoriesUsed,
       completedAt: row.completed_at
         ? new Date(row.completed_at).getTime()
-        : (row.last_updated_at || row.updated_at || row.created_at)
-          ? new Date(row.last_updated_at || row.updated_at || row.created_at).getTime()
+        : (row.last_updated_at || row.created_at)
+          ? new Date(row.last_updated_at || row.created_at).getTime()
           : Date.now(),
       status: 'completed',
       opponentIds: playerIds.filter((playerId) => playerId !== uid),
