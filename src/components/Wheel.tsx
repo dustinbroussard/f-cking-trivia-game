@@ -9,10 +9,11 @@ interface WheelProps {
   onSpinComplete: (category: string) => void;
   isSpinning: boolean;
   setIsSpinning: (spinning: boolean) => void;
+  disabled?: boolean;
   soundEnabled?: boolean;
 }
 
-export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsSpinning, soundEnabled = true }) => {
+export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsSpinning, disabled = false, soundEnabled = true }) => {
   const controls = useAnimation();
   const [rotation, setRotation] = useState(0);
   const [landedIndex, setLandedIndex] = useState<number | null>(null);
@@ -192,13 +193,13 @@ export const Wheel: React.FC<WheelProps> = ({ onSpinComplete, isSpinning, setIsS
           <div className="absolute inset-0 flex items-center justify-center">
             <button type="button"
               onClick={() => {
-                if (!isSpinning) {
+                if (!isSpinning && !disabled) {
                   setHoveredIndex(null);
                   setLandedIndex(null);
                   setIsSpinning(true);
                 }
               }}
-              disabled={isSpinning}
+              disabled={isSpinning || disabled}
               className="z-30 flex min-h-20 min-w-20 items-center justify-center rounded-full theme-button px-4 hover:scale-110 active:scale-95 transition-all duration-300 disabled:opacity-50 disabled:hover:scale-100 sm:min-h-24 sm:min-w-24"
               aria-label="Spin the category wheel"
               style={{
