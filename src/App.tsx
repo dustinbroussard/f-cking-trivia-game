@@ -373,7 +373,10 @@ export default function App() {
     isCheckingForResume: boolean;
   } | null>(null);
 
-  const existingQuestionIds = questions.map((question) => question.id);
+  const existingQuestionIds = [...new Set([
+    ...(game?.questionIds ?? []),
+    ...questions.map((question) => question.id),
+  ])];
   const playableCategories = getPlayableCategories();
   const themeMode = settings.themeMode;
   const musicEnabled = settings.soundEnabled && settings.musicEnabled;

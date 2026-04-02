@@ -541,16 +541,17 @@ export async function persistQuestionsToGame(gameId: string, questionIds: string
   }
 
   const state = normalizeStoredGameState(game.game_state);
+  const nextQuestionIds = [...new Set([...(state.questionIds ?? []), ...questionIds])];
   const { error } = await supabase
     .from('games')
     .update({
-      game_state: { ...state, questionIds },
+      game_state: { ...state, questionIds: nextQuestionIds },
       updated_at: nowIsoString(),
     })
     .eq('id', gameId);
 
   if (error) {
-    logSupabaseError('games', 'update', error, { gameId, questionIdsCount: questionIds.length, purpose: 'persistQuestionsToGame' });
+    logSupabaseError('games', 'update', error, { gameId, questionIdsCount: nextQuestionIds.length, purpose: 'persistQuestionsToGame' });
     throw error;
   }
 }
