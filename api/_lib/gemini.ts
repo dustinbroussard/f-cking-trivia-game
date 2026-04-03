@@ -17,6 +17,27 @@ function now() {
   return Date.now();
 }
 
+async function withPromiseTimeout<T>(promise: Promise<T>, timeoutMs?: number) {
+  if (!timeoutMs) {
+    return promise;
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`gemini timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 function withTimeoutSignal(timeoutMs?: number) {
   if (!timeoutMs) {
     return {
@@ -51,7 +72,7 @@ export async function generateGeminiTextResponse(prompt: string, options: Gemini
   try {
     const { GoogleGenAI } = await import('@google/genai');
     const ai = new GoogleGenAI({ apiKey });
-    const sdkRequest = ai.models.generateContent({
+    const response = await withPromiseTimeout(ai.models.generateContent({
       model: GEMINI_MODEL,
       config: systemInstruction
         ? {
@@ -64,15 +85,7 @@ export async function generateGeminiTextResponse(prompt: string, options: Gemini
             maxOutputTokens,
           },
       contents: prompt,
-    });
-    const response = timeoutMs
-      ? await Promise.race([
-          sdkRequest,
-          new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error(`gemini timed out after ${timeoutMs}ms`)), timeoutMs);
-          }),
-        ])
-      : await sdkRequest;
+    }), timeoutMs);
 
     if (typeof response.text === 'string') {
       return {

@@ -37,6 +37,7 @@ interface GenerationConfig<T> {
 
 const OPENROUTER_DEFAULT_MODEL = process.env.OPENROUTER_MODEL || 'openrouter/free';
 export const SHORT_FORM_COMMENTARY_TIMEOUT_MS = Number(process.env.AI_SHORT_FORM_TIMEOUT_MS || 10000);
+const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
 
 const FORBIDDEN_PHRASES = [
   'okay, here',
@@ -56,6 +57,29 @@ const FORBIDDEN_PHRASES = [
 
 function now() {
   return Date.now();
+}
+
+function getProviderModel(provider: CommentaryProvider) {
+  return provider === 'openrouter' ? OPENROUTER_DEFAULT_MODEL : GEMINI_DEFAULT_MODEL;
+}
+
+function getProviderOrder() {
+  const configuredOrder = (process.env.AI_PROVIDER_ORDER || 'gemini,openrouter')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter((value): value is CommentaryProvider => value === 'gemini' || value === 'openrouter');
+
+  const requested = configuredOrder.length > 0 ? configuredOrder : ['gemini', 'openrouter'];
+  const available = new Set<CommentaryProvider>();
+
+  if (process.env.GEMINI_API_KEY) {
+    available.add('gemini');
+  }
+  if (process.env.OPENROUTER_API_KEY) {
+    available.add('openrouter');
+  }
+
+  return requested.filter((provider, index) => available.has(provider) && requested.indexOf(provider) === index);
 }
 
 function normalizeWhitespace(text: string) {
@@ -278,7 +302,7 @@ async function tryProvider<T>(
   console.info('[commentary/ai] attempt', {
     task: config.task,
     provider,
-    model: provider === 'openrouter' ? OPENROUTER_DEFAULT_MODEL : 'gemini-2.5-flash',
+    model: getProviderModel(provider),
     timeoutMs: SHORT_FORM_COMMENTARY_TIMEOUT_MS,
   });
 
@@ -327,7 +351,7 @@ async function tryProvider<T>(
     console.warn('[commentary/ai] provider_failed', {
       task: config.task,
       provider,
-      model: provider === 'openrouter' ? OPENROUTER_DEFAULT_MODEL : 'gemini-2.5-flash',
+      model: getProviderModel(provider),
       durationMs: now() - startedAt,
       reason: isAbortTimeoutError(error) ? 'timeout' : summarizeError(error),
     });
@@ -340,14 +364,7 @@ async function tryProvider<T>(
 }
 
 export async function generateWithFallback<T>(config: GenerationConfig<T>) {
-  const providers: CommentaryProvider[] = [];
-
-  if (process.env.GEMINI_API_KEY) {
-    providers.push('gemini');
-  }
-  if (process.env.OPENROUTER_API_KEY) {
-    providers.push('openrouter');
-  }
+  const providers = getProviderOrder();
 
   const attemptReasons: Array<{ provider: CommentaryProvider; reason: string }> = [];
   for (const [index, provider] of providers.entries()) {
@@ -356,7 +373,7 @@ export async function generateWithFallback<T>(config: GenerationConfig<T>) {
       console.info('[commentary/ai] success', {
         task: config.task,
         provider,
-        model: provider === 'openrouter' ? OPENROUTER_DEFAULT_MODEL : 'gemini-2.5-flash',
+        model: getProviderModel(provider),
         usedFallbackProvider: index > 0,
         fallbackProvider: index > 0 ? provider : null,
         usedLocalFallback: false,

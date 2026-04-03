@@ -2,6 +2,12 @@ import { useRef, useCallback, useState } from 'react';
 import { publicAsset } from '../assets';
 import { UserSettings } from '../types';
 
+const THEME_TRACKS = ['theme.mp3', 'theme1.mp3', 'theme2.mp3'] as const;
+
+function getRandomThemeTrack() {
+  return THEME_TRACKS[Math.floor(Math.random() * THEME_TRACKS.length)];
+}
+
 export async function safePlay(media: HTMLMediaElement) {
   try {
     await media.play();
@@ -23,7 +29,7 @@ export function useSound(settings: UserSettings) {
   const newGameAudioRef = useRef<HTMLAudioElement>(null);
   const heckleChimeAudioRef = useRef<HTMLAudioElement>(null);
 
-  const themeAudioSrc = publicAsset('theme.mp3');
+  const [themeAudioSrc] = useState(() => publicAsset(getRandomThemeTrack()));
   const correctAudioSrc = publicAsset('correct.mp3');
   const wrongAudioSrc = publicAsset('wrong.mp3');
   const timesUpAudioSrc = publicAsset('times-up.mp3');

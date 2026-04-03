@@ -1,4 +1,4 @@
-const CACHE_NAME = 'aftg-cache-v4';
+const CACHE_NAME = 'aftg-cache-v5';
 const APP_SHELL = 'index.html';
 
 const PRECACHE_ASSETS = [
@@ -9,6 +9,8 @@ const PRECACHE_ASSETS = [
   'icon-512.png',
   'logo.png',
   'theme.mp3',
+  'theme1.mp3',
+  'theme2.mp3',
   'welcome1.mp3',
   'welcome2.mp3',
   'correct.mp3',

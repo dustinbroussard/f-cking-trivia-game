@@ -374,11 +374,14 @@ export default function App() {
   const lastHeckleWaitStateKeyRef = useRef<string>('');
   const heckleRequestIdRef = useRef(0);
   const heckleRequestInFlightRef = useRef<null | { requestId: number; waitStateKey: string }>(null);
+  const heckleRequestAbortRef = useRef<AbortController | null>(null);
   const lastHeckleRequestAtRef = useRef(0);
   const currentWaitingStateKeyRef = useRef<string | null>(null);
   const waitingStateEnteredAtRef = useRef<number | null>(null);
   const lastHeckleEligibilityLogRef = useRef<string>('');
   const endgameRoastRequestKeyRef = useRef<string>('');
+  const endgameRoastAbortRef = useRef<AbortController | null>(null);
+  const trashTalkAbortRef = useRef<AbortController | null>(null);
   const latestHeckleEligibilityRef = useRef<{ allowed: boolean; reason: string }>({
     allowed: false,
     reason: 'uninitialized',
@@ -1105,10 +1108,20 @@ export default function App() {
       },
     });
 
-    const generatedMessage = await Promise.race<string | null>([
-      generateTrashTalk(context),
-      new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 5000)),
-    ]);
+    trashTalkAbortRef.current?.abort();
+    const requestController = new AbortController();
+    trashTalkAbortRef.current = requestController;
+
+    const generatedMessage = await generateTrashTalk(context, {
+      signal: requestController.signal,
+      timeoutMs: 5000,
+    });
+
+    if (trashTalkAbortRef.current !== requestController) {
+      return;
+    }
+
+    trashTalkAbortRef.current = null;
 
     if (!generatedMessage) {
       console.warn('[trash-talk] Request returned no renderable message', {
@@ -1587,6 +1600,8 @@ export default function App() {
     if (shouldShowOpponentHeckles) return;
     heckleRequestIdRef.current += 1;
     heckleRequestInFlightRef.current = null;
+    heckleRequestAbortRef.current?.abort();
+    heckleRequestAbortRef.current = null;
     clearHeckles();
   }, [shouldShowOpponentHeckles]);
 
@@ -1659,6 +1674,9 @@ export default function App() {
     }
 
     const requestId = ++heckleRequestIdRef.current;
+    heckleRequestAbortRef.current?.abort();
+    const requestController = new AbortController();
+    heckleRequestAbortRef.current = requestController;
     const recentQuestionHistory = recentAiQuestionHistoryRef.current;
     const latestQuestionContext = recentQuestionHistory[0];
     const requestPayload = {
@@ -1700,7 +1718,10 @@ export default function App() {
       },
     });
 
-    generateHeckles(requestPayload)
+    generateHeckles(requestPayload, {
+      signal: requestController.signal,
+      timeoutMs: 6500,
+    })
       .then((generatedHeckles) => {
         const requestStillActive =
           heckleRequestInFlightRef.current?.requestId === requestId &&
@@ -1756,6 +1777,9 @@ export default function App() {
         if (heckleRequestInFlightRef.current?.requestId === requestId) {
           heckleRequestInFlightRef.current = null;
         }
+        if (heckleRequestAbortRef.current === requestController) {
+          heckleRequestAbortRef.current = null;
+        }
       });
   }, [
     pendingHeckleTrigger,
@@ -1785,6 +1809,12 @@ export default function App() {
         window.clearTimeout(prolongedWaitTimerRef.current);
         prolongedWaitTimerRef.current = null;
       }
+      trashTalkAbortRef.current?.abort();
+      trashTalkAbortRef.current = null;
+      heckleRequestAbortRef.current?.abort();
+      heckleRequestAbortRef.current = null;
+      endgameRoastAbortRef.current?.abort();
+      endgameRoastAbortRef.current = null;
       heckleRequestInFlightRef.current = null;
       heckleRequestIdRef.current += 1;
     };
@@ -2335,6 +2365,9 @@ export default function App() {
     }
 
     endgameRoastRequestKeyRef.current = requestKey;
+    endgameRoastAbortRef.current?.abort();
+    const requestController = new AbortController();
+    endgameRoastAbortRef.current = requestController;
     setIsGeneratingEndgameRoast(true);
     setEndgameRoast(null);
 
@@ -2365,10 +2398,10 @@ export default function App() {
       },
     });
 
-    Promise.race<EndgameRoastResult | null>([
-      generateEndgameRoast(requestPayload),
-      new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 7000)),
-    ])
+    generateEndgameRoast(requestPayload, {
+      signal: requestController.signal,
+      timeoutMs: 7000,
+    })
       .then((generatedRoast) => {
         if (endgameRoastRequestKeyRef.current !== requestKey) {
           console.info('[endgame-roast] Response discarded: stale request', {
@@ -2395,6 +2428,9 @@ export default function App() {
         });
       })
       .finally(() => {
+        if (endgameRoastAbortRef.current === requestController) {
+          endgameRoastAbortRef.current = null;
+        }
         if (endgameRoastRequestKeyRef.current === requestKey) {
           setIsGeneratingEndgameRoast(false);
         }
@@ -3632,6 +3668,12 @@ export default function App() {
     recentAiQuestionHistoryRef.current = [];
     lastHeckleWaitStateKeyRef.current = '';
     currentWaitingStateKeyRef.current = null;
+    trashTalkAbortRef.current?.abort();
+    trashTalkAbortRef.current = null;
+    heckleRequestAbortRef.current?.abort();
+    heckleRequestAbortRef.current = null;
+    endgameRoastAbortRef.current?.abort();
+    endgameRoastAbortRef.current = null;
     heckleRequestInFlightRef.current = null;
     lastHeckleRequestAtRef.current = 0;
     heckleRequestIdRef.current += 1;
@@ -3700,6 +3742,12 @@ export default function App() {
       recentAiQuestionHistoryRef.current = [];
       lastHeckleWaitStateKeyRef.current = '';
       currentWaitingStateKeyRef.current = null;
+      trashTalkAbortRef.current?.abort();
+      trashTalkAbortRef.current = null;
+      heckleRequestAbortRef.current?.abort();
+      heckleRequestAbortRef.current = null;
+      endgameRoastAbortRef.current?.abort();
+      endgameRoastAbortRef.current = null;
       heckleRequestInFlightRef.current = null;
       lastHeckleRequestAtRef.current = 0;
       heckleRequestIdRef.current += 1;

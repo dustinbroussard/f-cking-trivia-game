@@ -16,7 +16,77 @@ export const heckleSchema = {
   required: ['heckles'],
 };
 
-async function requestHecklesFromApi(context: HeckleGenerationContext) {
+interface AiRequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+const DEFAULT_HECKLE_TIMEOUT_MS = 6500;
+const DEFAULT_TRASH_TALK_TIMEOUT_MS = 5000;
+const DEFAULT_ENDGAME_ROAST_TIMEOUT_MS = 7000;
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && (error.name === 'AbortError' || /aborted|timed out/i.test(error.message));
+}
+
+function createAbortSignal(options: AiRequestOptions) {
+  const timeoutMs = options.timeoutMs;
+  const parentSignal = options.signal;
+
+  if (!timeoutMs) {
+    return {
+      signal: parentSignal,
+      cleanup: () => {},
+    };
+  }
+
+  const controller = new AbortController();
+  const abortFromParent = () => {
+    controller.abort(parentSignal?.reason);
+  };
+
+  if (parentSignal?.aborted) {
+    controller.abort(parentSignal.reason);
+  } else if (parentSignal) {
+    parentSignal.addEventListener('abort', abortFromParent, { once: true });
+  }
+
+  const timeoutId = window.setTimeout(() => {
+    controller.abort(new Error(`request timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      window.clearTimeout(timeoutId);
+      if (parentSignal) {
+        parentSignal.removeEventListener('abort', abortFromParent);
+      }
+    },
+  };
+}
+
+async function postAiJson<T>(endpoint: string, context: T, options: AiRequestOptions) {
+  const { signal, cleanup } = createAbortSignal(options);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(context),
+      signal,
+    });
+
+    const data = await response.json().catch(() => ({}));
+    return { response, data };
+  } finally {
+    cleanup();
+  }
+}
+
+async function requestHecklesFromApi(context: HeckleGenerationContext, options: AiRequestOptions = {}) {
   console.info('[heckles/client] Sending API request', {
     endpoint: '/api/generate-heckles',
     trigger: context.trigger,
@@ -24,15 +94,12 @@ async function requestHecklesFromApi(context: HeckleGenerationContext) {
     opponentName: context.opponentName ?? null,
     waitingReason: context.waitingReason,
   });
-  const response = await fetch('/api/generate-heckles', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(context),
+
+  const { response, data } = await postAiJson('/api/generate-heckles', context, {
+    ...options,
+    timeoutMs: options.timeoutMs ?? DEFAULT_HECKLE_TIMEOUT_MS,
   });
 
-  const data = await response.json().catch(() => ({}));
   console.info('[heckles/client] API response received', {
     endpoint: '/api/generate-heckles',
     ok: response.ok,
@@ -46,22 +113,19 @@ async function requestHecklesFromApi(context: HeckleGenerationContext) {
   return data;
 }
 
-async function requestTrashTalkFromApi(context: TrashTalkGenerationContext) {
+async function requestTrashTalkFromApi(context: TrashTalkGenerationContext, options: AiRequestOptions = {}) {
   console.info('[trash-talk/client] Sending API request', {
     endpoint: '/api/generate-trash-talk',
     event: context.event,
     playerName: context.playerName,
     opponentName: context.opponentName,
   });
-  const response = await fetch('/api/generate-trash-talk', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(context),
+
+  const { response, data } = await postAiJson('/api/generate-trash-talk', context, {
+    ...options,
+    timeoutMs: options.timeoutMs ?? DEFAULT_TRASH_TALK_TIMEOUT_MS,
   });
 
-  const data = await response.json().catch(() => ({}));
   console.info('[trash-talk/client] API response received', {
     endpoint: '/api/generate-trash-talk',
     ok: response.ok,
@@ -75,7 +139,7 @@ async function requestTrashTalkFromApi(context: TrashTalkGenerationContext) {
   return data;
 }
 
-async function requestEndgameRoastFromApi(context: EndgameRoastGenerationContext) {
+async function requestEndgameRoastFromApi(context: EndgameRoastGenerationContext, options: AiRequestOptions = {}) {
   console.info('[endgame-roast/client] Sending API request', {
     endpoint: '/api/generate-endgame-roast',
     winnerName: context.winnerName,
@@ -83,15 +147,12 @@ async function requestEndgameRoastFromApi(context: EndgameRoastGenerationContext
     winnerTrophies: context.winnerTrophies,
     loserTrophies: context.loserTrophies,
   });
-  const response = await fetch('/api/generate-endgame-roast', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(context),
+
+  const { response, data } = await postAiJson('/api/generate-endgame-roast', context, {
+    ...options,
+    timeoutMs: options.timeoutMs ?? DEFAULT_ENDGAME_ROAST_TIMEOUT_MS,
   });
 
-  const data = await response.json().catch(() => ({}));
   console.info('[endgame-roast/client] API response received', {
     endpoint: '/api/generate-endgame-roast',
     ok: response.ok,
@@ -106,18 +167,21 @@ async function requestEndgameRoastFromApi(context: EndgameRoastGenerationContext
   return data;
 }
 
-export async function generateHeckles(context: HeckleGenerationContext): Promise<string[]> {
+export async function generateHeckles(context: HeckleGenerationContext, options: AiRequestOptions = {}): Promise<string[]> {
   if (context.isSolo) {
     return [];
   }
 
   try {
-    const data = await requestHecklesFromApi(context);
+    const data = await requestHecklesFromApi(context, options);
     const rawHeckles =
       Array.isArray(data.heckles) ? data.heckles : data.heckles ?? data.commentary ?? data.lines ?? data.message ?? data;
 
     return extractAiDisplayLines(rawHeckles).slice(0, MAX_HECKLES);
   } catch (error) {
+    if (isAbortError(error)) {
+      return [];
+    }
     if (typeof process === 'undefined' || process.env.NODE_ENV !== 'production') {
       console.warn('[heckles] Generation failed:', error);
     }
@@ -125,15 +189,21 @@ export async function generateHeckles(context: HeckleGenerationContext): Promise
   }
 }
 
-export async function generateTrashTalk(context: TrashTalkGenerationContext): Promise<string | null> {
+export async function generateTrashTalk(
+  context: TrashTalkGenerationContext,
+  options: AiRequestOptions = {}
+): Promise<string | null> {
   if (context.isSolo) {
     return null;
   }
 
   try {
-    const data = await requestTrashTalkFromApi(context);
+    const data = await requestTrashTalkFromApi(context, options);
     return extractFirstAiDisplayLine(data.trashTalk ?? data.message ?? data.lines ?? data.commentary ?? data);
   } catch (error) {
+    if (isAbortError(error)) {
+      return null;
+    }
     if (typeof process === 'undefined' || process.env.NODE_ENV !== 'production') {
       console.warn('[trash-talk] Generation failed:', error);
     }
@@ -141,13 +211,16 @@ export async function generateTrashTalk(context: TrashTalkGenerationContext): Pr
   }
 }
 
-export async function generateEndgameRoast(context: EndgameRoastGenerationContext): Promise<EndgameRoastResult | null> {
+export async function generateEndgameRoast(
+  context: EndgameRoastGenerationContext,
+  options: AiRequestOptions = {}
+): Promise<EndgameRoastResult | null> {
   if (context.isSolo) {
     return null;
   }
 
   try {
-    const data = await requestEndgameRoastFromApi(context);
+    const data = await requestEndgameRoastFromApi(context, options);
     const loserRoast = typeof data.loserRoast === 'string' ? data.loserRoast.trim() : '';
     const winnerCompliment = typeof data.winnerCompliment === 'string' ? data.winnerCompliment.trim() : '';
 
@@ -160,6 +233,9 @@ export async function generateEndgameRoast(context: EndgameRoastGenerationContex
       winnerCompliment,
     };
   } catch (error) {
+    if (isAbortError(error)) {
+      return null;
+    }
     if (typeof process === 'undefined' || process.env.NODE_ENV !== 'production') {
       console.warn('[endgame-roast] Generation failed:', error);
     }
