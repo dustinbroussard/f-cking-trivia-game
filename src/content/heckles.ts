@@ -129,9 +129,6 @@ Rules:
 - No encouragement of self-harm
 - Keep each heckle short enough to fit as a quick waiting-state commentary card
 
-Good example:
-"${context.playerName} turned a ${context.difficulty || 'hard'} ${context.category || 'trivia'} question into a live demonstration of misplaced confidence. Mercifully, ${context.opponentName} now gets to restore adult supervision."
-
 Bad example:
 "LOL you suck this is bad wow terrible answer hahaha."
 `;
