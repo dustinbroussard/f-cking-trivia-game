@@ -12,9 +12,17 @@ export interface ProviderTextResponse {
   durationMs: number;
 }
 
+interface ValidationMeta {
+  parser: string;
+  parsed: boolean;
+  rawLength: number;
+  normalizedLength?: number;
+  itemCount?: number;
+}
+
 export type ValidationResult<T> =
-  | { ok: true; value: T }
-  | { ok: false; reason: string };
+  | { ok: true; value: T; meta: ValidationMeta }
+  | { ok: false; reason: string; meta: ValidationMeta };
 
 interface GenerationConfig<T> {
   task: 'heckles' | 'trash-talk' | 'endgame-roast';
@@ -24,6 +32,7 @@ interface GenerationConfig<T> {
   maxTokens: number;
   validate: (rawText: string | null) => ValidationResult<T>;
   localFallback: () => T;
+  fallbackMode: 'empty' | 'safe';
 }
 
 const OPENROUTER_DEFAULT_MODEL = process.env.OPENROUTER_MODEL || 'openrouter/free';
@@ -72,23 +81,71 @@ function textContainsForbiddenPhrase(text: string) {
   return FORBIDDEN_PHRASES.find((phrase) => normalized.includes(phrase)) ?? null;
 }
 
+function buildMeta(
+  rawText: string | null,
+  parser: string,
+  options: Partial<Pick<ValidationMeta, 'parsed' | 'normalizedLength' | 'itemCount'>> = {}
+): ValidationMeta {
+  return {
+    parser,
+    parsed: options.parsed ?? false,
+    rawLength: rawText?.length ?? 0,
+    normalizedLength: options.normalizedLength,
+    itemCount: options.itemCount,
+  };
+}
+
+function stripCodeFence(text: string) {
+  return text.trim().replace(/^```(?:json|text)?/i, '').replace(/```$/i, '').trim();
+}
+
+function stripHarmlessLeadIn(text: string) {
+  let next = text.trim();
+
+  const leadIns = [
+    /^(?:sure|certainly|absolutely|okay|ok)[,!:\-\s]+/i,
+    /^(?:here(?:'|’)s(?:\s+(?:one|your|a|the|some|three))?|returning)[!:\-\s]+/i,
+    /^(?:trash\s*talk|heckles?|commentary|line|lines)[!:\-\s]+/i,
+  ];
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pattern of leadIns) {
+      if (pattern.test(next)) {
+        next = next.replace(pattern, '').trim();
+        changed = true;
+      }
+    }
+  }
+
+  return next;
+}
+
+function stripLinePrefix(text: string) {
+  return text
+    .trim()
+    .replace(/^[-*]\s+/, '')
+    .replace(/^\d+[.)]\s+/, '')
+    .replace(/^(?:heckle|trash\s*talk|line)\s*\d*\s*:\s*/i, '')
+    .replace(/^["']|["']$/g, '')
+    .trim();
+}
+
 function getPlainTextRejectionReason(text: string, maxChars: number) {
-  const trimmed = normalizeWhitespace(text);
+  const trimmed = stripHarmlessLeadIn(normalizeWhitespace(text));
 
   if (!trimmed) return 'empty_response';
   if (trimmed.length > maxChars) return 'response_too_long';
 
-  const forbiddenPhrase = textContainsForbiddenPhrase(trimmed);
-  if (forbiddenPhrase) return `forbidden_phrase:${forbiddenPhrase}`;
+  const forbiddenPhrase = textContainsForbiddenPhrase(trimmed.slice(0, 80));
+  if (forbiddenPhrase && /^(okay|let's think|here(?:'|’)s my reasoning|here's my reasoning|i'd go with|sure|certainly|the answer is|step-by-step|i can help with that|as an ai|i'm unable|i cannot)/i.test(trimmed)) {
+    return `forbidden_phrase:${forbiddenPhrase}`;
+  }
   if (/```/.test(trimmed)) return 'contains_code_fence';
   if (/<\/?[a-z][^>]*>/i.test(trimmed)) return 'contains_markup';
-  if (/^\s*[{[]/.test(trimmed)) return 'contains_structured_payload';
-  if (/^\s*[-*]\s+/m.test(trimmed) || /^\s*\d+\.\s+/m.test(trimmed)) return 'contains_bullets';
   if (/(^|\n)\s*(analysis|reasoning|thought process|internal reasoning|chain of thought)\s*:/i.test(trimmed)) {
     return 'contains_reasoning_label';
-  }
-  if (/(^|\n)\s*(heckle|trash talk|winner compliment|loser roast)\s*\d*\s*:/i.test(trimmed)) {
-    return 'contains_item_label';
   }
 
   const lines = trimmed.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -242,9 +299,11 @@ async function tryProvider<T>(
         provider,
         model: providerResponse.model,
         durationMs: providerResponse.durationMs,
+        rawResponsePresent: typeof providerResponse.text === 'string' && providerResponse.text.trim().length > 0,
+        rawResponseLength: providerResponse.text?.length ?? 0,
         reason: 'slow_response',
       });
-      return { ok: false, reason: 'slow_response' };
+      return { ok: false, reason: 'slow_response', meta: buildMeta(providerResponse.text, 'none') };
     }
 
     const validation = config.validate(providerResponse.text);
@@ -254,8 +313,14 @@ async function tryProvider<T>(
       provider,
       model: providerResponse.model,
       durationMs: providerResponse.durationMs,
+      rawResponsePresent: typeof providerResponse.text === 'string' && providerResponse.text.trim().length > 0,
+      rawResponseLength: providerResponse.text?.length ?? 0,
+      parsingSucceeded: validation.meta.parsed,
+      parser: validation.meta.parser,
+      normalizedLength: validation.meta.normalizedLength ?? null,
+      itemCount: validation.meta.itemCount ?? null,
       validation: validation.ok ? 'pass' : 'fail',
-      reason: validationReason,
+      rejectionReason: validationReason,
     });
     return validation;
   } catch (error) {
@@ -266,54 +331,73 @@ async function tryProvider<T>(
       durationMs: now() - startedAt,
       reason: isAbortTimeoutError(error) ? 'timeout' : summarizeError(error),
     });
-    return { ok: false, reason: isAbortTimeoutError(error) ? 'timeout' : summarizeError(error) };
+    return {
+      ok: false,
+      reason: isAbortTimeoutError(error) ? 'timeout' : summarizeError(error),
+      meta: buildMeta(null, 'none'),
+    };
   }
 }
 
 export async function generateWithFallback<T>(config: GenerationConfig<T>) {
   const providers: CommentaryProvider[] = [];
 
-  if (process.env.OPENROUTER_API_KEY) {
-    providers.push('openrouter');
-  }
   if (process.env.GEMINI_API_KEY) {
     providers.push('gemini');
   }
+  if (process.env.OPENROUTER_API_KEY) {
+    providers.push('openrouter');
+  }
 
-  for (const provider of providers) {
+  const attemptReasons: Array<{ provider: CommentaryProvider; reason: string }> = [];
+  for (const [index, provider] of providers.entries()) {
     const result = await tryProvider(provider, config);
     if (result.ok) {
       console.info('[commentary/ai] success', {
         task: config.task,
         provider,
-        usedGeminiFallback: provider === 'gemini' && providers[0] === 'openrouter',
+        model: provider === 'openrouter' ? OPENROUTER_DEFAULT_MODEL : 'gemini-2.5-flash',
+        usedFallbackProvider: index > 0,
+        fallbackProvider: index > 0 ? provider : null,
         usedLocalFallback: false,
+        finalResultEmptyByDesign: false,
       });
       return result.value;
+    }
+
+    if (!result.ok) {
+      const failureReason = (result as { ok: false; reason: string }).reason;
+      attemptReasons.push({
+        provider,
+        reason: failureReason,
+      });
     }
   }
 
   console.warn('[commentary/ai] local_fallback', {
     task: config.task,
     attemptedProviders: providers,
-    usedGeminiFallback: providers.includes('gemini'),
-    usedLocalFallback: true,
+    attemptReasons,
+    usedLocalFallback: config.fallbackMode === 'safe',
+    finalResultEmptyByDesign: config.fallbackMode === 'empty',
   });
 
   return config.localFallback();
 }
 
-function stripCodeFence(text: string) {
-  return text.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
-}
-
-function findJsonObject(text: string) {
-  const cleaned = stripCodeFence(text);
+function findJsonValue(text: string) {
+  const cleaned = stripCodeFence(stripHarmlessLeadIn(text));
   const candidates = [cleaned];
   const firstBrace = cleaned.indexOf('{');
   const lastBrace = cleaned.lastIndexOf('}');
   if (firstBrace !== -1 && lastBrace > firstBrace) {
     candidates.push(cleaned.slice(firstBrace, lastBrace + 1));
+  }
+
+  const firstBracket = cleaned.indexOf('[');
+  const lastBracket = cleaned.lastIndexOf(']');
+  if (firstBracket !== -1 && lastBracket > firstBracket) {
+    candidates.push(cleaned.slice(firstBracket, lastBracket + 1));
   }
 
   for (const candidate of candidates) {
@@ -328,60 +412,137 @@ function findJsonObject(text: string) {
 }
 
 function cleanLine(text: string) {
-  return normalizeWhitespace(text).replace(/^["']|["']$/g, '').trim();
+  return stripLinePrefix(stripHarmlessLeadIn(normalizeWhitespace(text)));
+}
+
+function extractStringArrayCandidate(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => (typeof item === 'string' ? cleanLine(item) : '')).filter(Boolean);
+  }
+
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+
+  const record = value as Record<string, unknown>;
+  const candidates = [
+    record.heckles,
+    record.lines,
+    record.commentary,
+    record.messages,
+    record.message,
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate.map((item) => (typeof item === 'string' ? cleanLine(item) : '')).filter(Boolean);
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      return splitTextIntoCandidateLines(candidate);
+    }
+  }
+
+  return [];
+}
+
+function splitTextIntoCandidateLines(text: string) {
+  const normalized = stripCodeFence(stripHarmlessLeadIn(text));
+  const lines = normalized
+    .split('\n')
+    .map((line) => cleanLine(line))
+    .filter(Boolean);
+
+  if (lines.length > 1) {
+    return lines;
+  }
+
+  return normalized
+    .split(/\s*(?:\n|(?<=["'!?])\s{2,}|(?<=["'])\s*,\s*)\s*/g)
+    .map((line) => cleanLine(line))
+    .filter(Boolean);
 }
 
 export function validateHeckles(rawText: string | null): ValidationResult<string[]> {
-  if (!rawText) return { ok: false, reason: 'empty_response' };
-  if (getPlainTextRejectionReason(rawText, 600)) return { ok: false, reason: getPlainTextRejectionReason(rawText, 600)! };
+  if (!rawText) return { ok: false, reason: 'empty_response', meta: buildMeta(rawText, 'none') };
 
-  const parsed = findJsonObject(rawText);
-  if (!parsed || !Array.isArray(parsed.heckles)) {
-    return { ok: false, reason: 'invalid_shape' };
+  const parsed = findJsonValue(rawText);
+  const parser = parsed ? 'json' : 'plain_text';
+  const heckles = parsed ? extractStringArrayCandidate(parsed) : splitTextIntoCandidateLines(rawText);
+  const meta = buildMeta(rawText, parser, {
+    parsed: !!parsed,
+    normalizedLength: normalizeWhitespace(rawText).length,
+    itemCount: heckles.length,
+  });
+
+  if (!heckles.length) {
+    return { ok: false, reason: parsed ? 'parsed_but_no_items' : 'invalid_shape', meta };
   }
-
-  const heckles = parsed.heckles.map((item: unknown) => (typeof item === 'string' ? cleanLine(item) : '')).filter(Boolean);
-  if (heckles.length !== MAX_HECKLES) return { ok: false, reason: 'wrong_item_count' };
-  if (rawText.trim()[0] !== '{') return { ok: false, reason: 'preamble_before_items' };
 
   for (const heckle of heckles) {
     const textReason = getPlainTextRejectionReason(heckle, 160);
-    if (textReason) return { ok: false, reason: `item_${textReason}` };
+    if (textReason) return { ok: false, reason: `item_${textReason}`, meta };
     const words = wordCount(heckle);
-    if (words < 3 || words > 25) return { ok: false, reason: 'item_word_count_out_of_bounds' };
-    if (heckle.length > 160) return { ok: false, reason: 'item_char_limit_exceeded' };
+    if (words < 2 || words > 25) return { ok: false, reason: 'item_word_count_out_of_bounds', meta };
+    if (heckle.length > 160) return { ok: false, reason: 'item_char_limit_exceeded', meta };
   }
 
-  for (let index = 0; index < heckles.length; index += 1) {
-    for (let compareIndex = index + 1; compareIndex < heckles.length; compareIndex += 1) {
-      if (areNearDuplicates(heckles[index], heckles[compareIndex])) {
-        return { ok: false, reason: 'duplicate_or_near_duplicate_items' };
+  const trimmedHeckles = heckles.slice(0, MAX_HECKLES);
+  for (let index = 0; index < trimmedHeckles.length; index += 1) {
+    for (let compareIndex = index + 1; compareIndex < trimmedHeckles.length; compareIndex += 1) {
+      if (areNearDuplicates(trimmedHeckles[index], trimmedHeckles[compareIndex])) {
+        return { ok: false, reason: 'duplicate_or_near_duplicate_items', meta };
       }
     }
   }
 
-  return { ok: true, value: heckles };
+  return {
+    ok: true,
+    value: trimmedHeckles,
+    meta: {
+      ...meta,
+      itemCount: trimmedHeckles.length,
+    },
+  };
 }
 
 export function validateTrashTalk(rawText: string | null): ValidationResult<string> {
-  if (!rawText) return { ok: false, reason: 'empty_response' };
+  if (!rawText) return { ok: false, reason: 'empty_response', meta: buildMeta(rawText, 'none') };
 
-  const parsed = findJsonObject(rawText);
-  const text = typeof parsed?.trashTalk === 'string' ? cleanLine(parsed.trashTalk) : cleanLine(rawText);
+  const parsed = findJsonValue(rawText);
+  const parser = parsed ? 'json' : 'plain_text';
+  const text =
+    typeof (parsed as Record<string, unknown> | null)?.trashTalk === 'string'
+      ? cleanLine((parsed as Record<string, string>).trashTalk)
+      : typeof (parsed as Record<string, unknown> | null)?.message === 'string'
+        ? cleanLine((parsed as Record<string, string>).message)
+        : cleanLine(rawText);
+  const meta = buildMeta(rawText, parser, {
+    parsed: !!parsed,
+    normalizedLength: text.length,
+    itemCount: text ? 1 : 0,
+  });
   const textReason = getPlainTextRejectionReason(text, 180);
-  if (textReason) return { ok: false, reason: textReason };
-  if (text.split('\n').length > 2) return { ok: false, reason: 'too_many_lines' };
-  if (wordCount(text) < 4 || wordCount(text) > 32) return { ok: false, reason: 'word_count_out_of_bounds' };
+  if (textReason) return { ok: false, reason: textReason, meta };
+  if (text.split('\n').length > 2) return { ok: false, reason: 'too_many_lines', meta };
+  if (wordCount(text) < 3 || wordCount(text) > 32) return { ok: false, reason: 'word_count_out_of_bounds', meta };
 
-  return { ok: true, value: text };
+  return { ok: true, value: text, meta };
 }
 
 export function validateEndgameRoast(rawText: string | null): ValidationResult<EndgameRoastResult> {
-  if (!rawText) return { ok: false, reason: 'empty_response' };
+  if (!rawText) return { ok: false, reason: 'empty_response', meta: buildMeta(rawText, 'none') };
 
-  const parsed = findJsonObject(rawText);
+  const parsed = findJsonValue(rawText);
+  const meta = buildMeta(rawText, parsed ? 'json' : 'none', {
+    parsed: !!parsed,
+    normalizedLength: normalizeWhitespace(rawText).length,
+    itemCount: parsed ? 2 : 0,
+  });
   if (!parsed || typeof parsed !== 'object') {
-    return { ok: false, reason: 'invalid_shape' };
+    return { ok: false, reason: 'invalid_shape', meta };
   }
 
   const loserRoast = typeof (parsed as EndgameRoastResult).loserRoast === 'string' ? cleanLine((parsed as EndgameRoastResult).loserRoast) : '';
@@ -390,16 +551,16 @@ export function validateEndgameRoast(rawText: string | null): ValidationResult<E
     : '';
 
   if (!loserRoast || !winnerCompliment) {
-    return { ok: false, reason: 'missing_required_fields' };
+    return { ok: false, reason: 'missing_required_fields', meta };
   }
 
   const loserReason = getPlainTextRejectionReason(loserRoast, 220);
-  if (loserReason) return { ok: false, reason: `loserRoast_${loserReason}` };
+  if (loserReason) return { ok: false, reason: `loserRoast_${loserReason}`, meta };
   const winnerReason = getPlainTextRejectionReason(winnerCompliment, 220);
-  if (winnerReason) return { ok: false, reason: `winnerCompliment_${winnerReason}` };
+  if (winnerReason) return { ok: false, reason: `winnerCompliment_${winnerReason}`, meta };
 
   if (wordCount(loserRoast) > 32 || wordCount(winnerCompliment) > 32) {
-    return { ok: false, reason: 'field_word_count_out_of_bounds' };
+    return { ok: false, reason: 'field_word_count_out_of_bounds', meta };
   }
 
   return {
@@ -408,6 +569,7 @@ export function validateEndgameRoast(rawText: string | null): ValidationResult<E
       loserRoast,
       winnerCompliment,
     },
+    meta,
   };
 }
 

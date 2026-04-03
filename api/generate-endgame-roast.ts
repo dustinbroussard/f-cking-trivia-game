@@ -99,6 +99,7 @@ export default async function handler(req: any, res: any) {
           winnerName: body.winnerName!,
           loserName: body.loserName!,
         }),
+      fallbackMode: 'safe',
     });
 
     console.info('[endgame-roast/api] Commentary resolved', {

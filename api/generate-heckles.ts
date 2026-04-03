@@ -106,12 +106,14 @@ export default async function handler(req: any, res: any) {
       maxTokens: 120,
       validate: validateHeckles,
       localFallback: () => [],
+      fallbackMode: 'empty',
     });
 
     console.info('[heckles/api] Commentary resolved', {
       requestSummary,
       heckleCount: heckles.length,
       hecklePreview: heckles[0] ?? null,
+      finalResultEmptyByDesign: heckles.length === 0,
     });
     sendJson(res, 200, heckles);
   } catch (error) {

@@ -92,12 +92,14 @@ export default async function handler(req: any, res: any) {
       maxTokens: 120,
       validate: validateTrashTalk,
       localFallback: () => null,
+      fallbackMode: 'empty',
     });
 
     console.info('[trash-talk/api] Commentary resolved', {
       requestSummary,
       hasTrashTalk: !!trashTalk,
-      trashTalkLength: trashTalk.length,
+      trashTalkLength: trashTalk?.length ?? 0,
+      finalResultEmptyByDesign: !trashTalk,
     });
     sendJson(res, 200, trashTalk);
   } catch (error) {

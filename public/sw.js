@@ -41,7 +41,7 @@ async function putInCache(request, response) {
 
   try {
     const cache = await caches.open(CACHE_NAME);
-    await cache.put(request, response.clone());
+    await cache.put(request, response);
   } catch (error) {
     console.warn('[sw] cache.put skipped:', request.url, error);
   }
@@ -68,7 +68,10 @@ async function cacheFirst(request) {
   }
 
   const response = await fetch(request);
-  await putInCache(request, response);
+  const cacheResponse = shouldCacheResponse(request, response) ? response.clone() : null;
+  if (cacheResponse) {
+    await putInCache(request, cacheResponse);
+  }
   return response;
 }
 
@@ -77,7 +80,10 @@ async function staleWhileRevalidate(request) {
   const cachedResponse = await cache.match(request);
   const networkPromise = fetch(request)
     .then((networkResponse) => {
-      void putInCache(request, networkResponse);
+      const cacheResponse = shouldCacheResponse(request, networkResponse) ? networkResponse.clone() : null;
+      if (cacheResponse) {
+        void putInCache(request, cacheResponse);
+      }
       return networkResponse;
     })
     .catch(() => cachedResponse);
