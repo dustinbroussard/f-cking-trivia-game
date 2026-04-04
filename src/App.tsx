@@ -3155,25 +3155,12 @@ export default function App() {
           return p;
         });
         const nextTurnOwner = isSolo ? user.id : getOpponentTurnOwner(game, user.id) ?? game.currentTurn;
-        void triggerHeckle(resolvedIndex >= 0 ? 'wrong_answer' : 'round_loss');
-        const gamePatch = isSolo
-          ? { players: updatedPlayers, current_turn: user.id }
-          : { players: updatedPlayers };
-        const shouldLockForTurnHandoff = !isSolo && !!nextTurnOwner && nextTurnOwner !== user.id;
-
-        if (shouldLockForTurnHandoff) {
-          const deferredAt = Date.now();
-          setDeferredTurnHandoff({
-            gameId: game.id,
-            actingUserId: user.id,
-            nextTurnOwner,
-            questionId,
-            startedAt: deferredAt,
-            deferredAt,
-          });
-        } else {
-          setDeferredTurnHandoff(null);
-        }
+        void triggerHeckle('wrong_answer');
+        const gamePatch = {
+          players: updatedPlayers,
+          current_turn: nextTurnOwner,
+        };
+        setDeferredTurnHandoff(null);
 
         console.info('[turnSync] Incorrect-answer branch selected', {
           gameId: game.id,
@@ -3190,23 +3177,23 @@ export default function App() {
             currentTurnUserIdAfter: nextTurnOwner,
             effectiveCurrentTurnOwnerAfterLocalLock: nextTurnOwner,
             isTurnHandoffPending: false,
-            isDeferredTurnHandoffPending: shouldLockForTurnHandoff,
+            isDeferredTurnHandoffPending: false,
             resultPhase: 'revealing',
             roastVisible: false,
             hasCurrentQuestion: true,
             hasRevealedCategory: !!revealedCategory,
           },
-          localTurnHandoffDeferredUntilContinue: shouldLockForTurnHandoff,
-          updatedFields: ['game_state.players'],
+          localTurnHandoffDeferredUntilContinue: false,
+          updatedFields: ['game_state.players', 'current_turn_profile_id'],
           dbPatch: {
             players: updatedPlayers.map((player) => ({
               uid: player.uid,
               score: player.score,
               streak: player.streak,
             })),
-            ...(isSolo ? { current_turn: user.id } : {}),
+            current_turn: nextTurnOwner,
           },
-          realtimeWillOwnTurnSwitch: !isSolo,
+          realtimeWillOwnTurnSwitch: true,
         });
         await updateGame(game.id, gamePatch);
         setPlayers(updatedPlayers);
@@ -3215,7 +3202,7 @@ export default function App() {
             ? {
               ...current,
               players: updatedPlayers,
-              currentTurn: isSolo ? user.id : current.currentTurn,
+              currentTurn: nextTurnOwner,
             }
             : current
         );
