@@ -1260,6 +1260,7 @@ export default function App() {
     setSelectedCategory(null);
     setSelectedAnswer(null);
     setCorrectAnswer(null);
+    setIsSpinning(false);
     setShouldBlurQuestionBackground(false);
     setQuestionClockNow(Date.now());
   };
@@ -3819,6 +3820,7 @@ export default function App() {
     setIsMobileChatOpen(false);
     setSeenIncomingMessageCount(0);
     setCurrentQuestion(null);
+    setIsSpinning(false);
     setIsSolo(false);
     setError(null);
     setLastAnswerCorrect(false);
@@ -3900,6 +3902,7 @@ export default function App() {
       setLastAnswerCorrect(false);
       setManualPickReady(false);
       setShowManualPickPrompt(false);
+      setIsSpinning(false);
       setShouldBlurQuestionBackground(false);
       setResultPhase('idle');
       setQueuedSpecialEvent(null);
