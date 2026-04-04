@@ -142,6 +142,15 @@ export function extractAiDisplayLines(value: unknown) {
   return lines;
 }
 
+export function extractAiDisplayText(value: unknown) {
+  const lines = extractAiDisplayLines(value);
+  if (lines.length === 0) {
+    return null;
+  }
+
+  return lines.join('\n');
+}
+
 export function extractFirstAiDisplayLine(value: unknown) {
   return extractAiDisplayLines(value)[0] ?? null;
 }

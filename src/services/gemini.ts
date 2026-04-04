@@ -2,7 +2,7 @@ import type { EndgameRoastGenerationContext, EndgameRoastResult } from '../conte
 import type { HeckleGenerationContext } from '../content/heckles.js';
 import { MAX_HECKLES } from '../content/heckles.js';
 import type { TrashTalkGenerationContext } from '../content/trashTalk.js';
-import { extractAiDisplayLines, extractFirstAiDisplayLine } from './aiText.js';
+import { extractAiDisplayLines, extractAiDisplayText } from './aiText.js';
 
 interface AiRequestOptions {
   signal?: AbortSignal;
@@ -130,7 +130,7 @@ async function requestTrashTalkFromApi(context: TrashTalkGenerationContext, opti
     ...options,
     timeoutMs: options.timeoutMs ?? DEFAULT_TRASH_TALK_TIMEOUT_MS,
   });
-  const normalizedTrashTalk = extractFirstAiDisplayLine(
+  const normalizedTrashTalk = extractAiDisplayText(
     data?.trashTalk ?? data?.message ?? data?.lines ?? data?.commentary ?? data
   );
 
@@ -220,7 +220,7 @@ export async function generateTrashTalk(
 
   try {
     const data = await requestTrashTalkFromApi(context, options);
-    const normalizedTrashTalk = extractFirstAiDisplayLine(
+    const normalizedTrashTalk = extractAiDisplayText(
       data.trashTalk ?? data.message ?? data.lines ?? data.commentary ?? data
     );
     console.info('[trash-talk/client] Normalized response', {

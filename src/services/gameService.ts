@@ -28,6 +28,7 @@ const GAME_MESSAGES_TIMESTAMP_COLUMN = 'created_at';
 const GAME_MESSAGES_REQUIRED = false;
 const GAME_MESSAGES_SELECT_COLUMNS =
   'id, game_id, user_id, message_type, content, created_at, avatar_url_snapshot';
+const GAME_MESSAGES_RETRY_DELAYS_MS = [500, 1000, 2000];
 
 type GameMessageRow = {
   id: string;
@@ -44,6 +45,26 @@ type SendMessageInput = {
   userId: string;
   content: string;
   avatarUrlSnapshot?: string | null;
+};
+
+type SupabaseRealtimeChannel = ReturnType<typeof supabase.channel>;
+
+type SubscribeToMessagesInput = {
+  game: GameState | null;
+  userId: string | null;
+  callback: (message: ChatMessage) => void;
+  onError?: (error: unknown) => void;
+};
+
+type GameMessagesSubscriptionState = {
+  gameId: string | null;
+  gameMode: string | null;
+  userId: string | null;
+  playerIds: string[];
+  isMultiplayer: boolean;
+  isMember: boolean;
+  prerequisitesMet: boolean;
+  reason: 'ok' | 'missing_user' | 'missing_game' | 'not_multiplayer' | 'not_member';
 };
 
 async function loadMessageProfiles(ids: Array<string | null | undefined>) {
@@ -1126,6 +1147,84 @@ export function mapGameMessageRow(
   };
 }
 
+function getGameMessagesSubscriptionState(
+  game: GameState | null,
+  userId: string | null
+): GameMessagesSubscriptionState {
+  const gameId = typeof game?.id === 'string' && game.id.length > 0 ? game.id : null;
+  const playerIds = Array.isArray(game?.playerIds)
+    ? game.playerIds.filter((playerId): playerId is string => typeof playerId === 'string' && playerId.length > 0)
+    : [];
+  const gameMode = typeof game?.gameMode === 'string' && game.gameMode.length > 0
+    ? game.gameMode
+    : playerIds.length > 1
+      ? 'multiplayer'
+      : 'solo';
+  const isMultiplayer = gameMode !== 'solo' && playerIds.length > 1;
+  const isMember = !!userId && playerIds.includes(userId);
+
+  let reason: GameMessagesSubscriptionState['reason'] = 'ok';
+  if (!userId) {
+    reason = 'missing_user';
+  } else if (!gameId) {
+    reason = 'missing_game';
+  } else if (!isMultiplayer) {
+    reason = 'not_multiplayer';
+  } else if (!isMember) {
+    reason = 'not_member';
+  }
+
+  return {
+    gameId,
+    gameMode,
+    userId,
+    playerIds,
+    isMultiplayer,
+    isMember,
+    prerequisitesMet: reason === 'ok',
+    reason,
+  };
+}
+
+function logGameMessagesLifecycle(
+  event:
+    | 'SKIPPED'
+    | 'SUBSCRIBING'
+    | 'SUBSCRIBED'
+    | 'CHANNEL_ERROR'
+    | 'TIMED_OUT'
+    | 'CLOSED'
+    | 'RETRY_SCHEDULED'
+    | 'FETCH_COMPLETE'
+    | 'CLEANUP',
+  metadata: {
+    userId: string | null;
+    gameId: string | null;
+    gameMode: string | null;
+    prerequisitesMet: boolean;
+    priorChannelExisted: boolean;
+    cleanupRan: boolean;
+    reason?: string;
+    retryAttempt?: number;
+    retryDelayMs?: number;
+    messageCount?: number;
+  },
+  error?: unknown
+) {
+  const payload = {
+    scope: 'game_messages',
+    ...metadata,
+    error,
+  };
+
+  if (event === 'CHANNEL_ERROR' || event === 'TIMED_OUT' || event === 'CLOSED') {
+    console.warn('[Supabase] game_messages channel lifecycle', { event, ...payload });
+    return;
+  }
+
+  console.info('[Supabase] game_messages channel lifecycle', { event, ...payload });
+}
+
 export async function fetchMessages(gameId: string): Promise<ChatMessage[]> {
   logGameMessagesQuery('fetchMessages', gameId, GAME_MESSAGES_REQUIRED, false);
   console.info('[Supabase] game_messages select config', {
@@ -1164,61 +1263,237 @@ export async function fetchMessages(gameId: string): Promise<ChatMessage[]> {
   }
 }
 
-export const subscribeToMessages = (
-  gameId: string,
-  callback: (message: ChatMessage) => void,
-  onError?: (error: unknown) => void
-) => {
-  logGameMessagesQuery('subscribeToMessages', gameId, GAME_MESSAGES_REQUIRED, false);
+export const subscribeToMessages = ({
+  game,
+  userId,
+  callback,
+  onError,
+}: SubscribeToMessagesInput) => {
+  const subscriptionState = getGameMessagesSubscriptionState(game, userId);
+  const { gameId, gameMode, prerequisitesMet, reason } = subscriptionState;
 
-  const channel = supabase
-    .channel(`messages-${gameId}`)
-    .on(
-      'postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'game_messages', filter: `game_id=eq.${gameId}` },
-      (payload) => {
-        void (async () => {
-          try {
-          if (!payload.new) {
-            console.warn('[Supabase] game_messages insert payload missing row data', {
-              table: 'game_messages',
-              functionName: 'subscribeToMessages',
-              gameId,
-              payload,
-            });
-            return;
-          }
+  let channel: SupabaseRealtimeChannel | null = null;
+  let retryTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let cleanupRan = false;
+  let retryAttempt = 0;
+  let channelGeneration = 0;
+  const deliveredMessageIds = new Set<string>();
 
-            const row = payload.new as GameMessageRow;
-            const profileMap = await loadMessageProfiles([row.user_id]);
-            callback(mapGameMessageRow(row, profileMap));
-        } catch (error) {
-          logSupabaseError('game_messages', 'realtime-insert-map', error, {
-            functionName: 'subscribeToMessages',
-            gameId,
-            payload,
-          });
-          onError?.(error);
-        }
-        })();
-      }
-    )
-    .subscribe((status, error) => {
-      if (status === 'SUBSCRIBED') {
+  const clearRetryTimeout = () => {
+    if (!retryTimeoutId) {
+      return;
+    }
+
+    clearTimeout(retryTimeoutId);
+    retryTimeoutId = null;
+  };
+
+  const removeChannel = (markCleanup: boolean) => {
+    if (!channel) {
+      cleanupRan = markCleanup;
+      return false;
+    }
+
+    const existingChannel = channel;
+    channel = null;
+    cleanupRan = markCleanup;
+    void supabase.removeChannel(existingChannel);
+    return true;
+  };
+
+  const emitMessage = (message: ChatMessage) => {
+    if (deliveredMessageIds.has(message.id)) {
+      return;
+    }
+
+    deliveredMessageIds.add(message.id);
+    callback(message);
+  };
+
+  const fetchInitialMessages = async (activeGeneration: number) => {
+    if (!gameId || cleanupRan || channelGeneration !== activeGeneration) {
+      return;
+    }
+
+    try {
+      const initialMessages = await fetchMessages(gameId);
+      if (cleanupRan || channelGeneration !== activeGeneration) {
         return;
       }
 
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-        logSupabaseError('game_messages', 'subscribe', error ?? new Error(`Realtime status: ${status}`), {
-          functionName: 'subscribeToMessages',
-          gameId,
-          status,
-        });
-        onError?.(error ?? new Error(`Realtime status: ${status}`));
+      for (const message of initialMessages) {
+        emitMessage(message);
       }
+
+      logGameMessagesLifecycle('FETCH_COMPLETE', {
+        userId,
+        gameId,
+        gameMode,
+        prerequisitesMet,
+        priorChannelExisted: false,
+        cleanupRan,
+        messageCount: initialMessages.length,
+      });
+    } catch (error) {
+      logSupabaseError('game_messages', 'initial-fetch', error, {
+        functionName: 'subscribeToMessages',
+        gameId,
+        gameMode,
+        userId,
+      });
+      onError?.(error);
+    }
+  };
+
+  const startSubscription = () => {
+    if (!prerequisitesMet || !gameId) {
+      logGameMessagesLifecycle('SKIPPED', {
+        userId,
+        gameId,
+        gameMode,
+        prerequisitesMet,
+        priorChannelExisted: channel !== null,
+        cleanupRan,
+        reason,
+      });
+      return;
+    }
+
+    logGameMessagesQuery('subscribeToMessages', gameId, GAME_MESSAGES_REQUIRED, false);
+    clearRetryTimeout();
+
+    const priorChannelExisted = removeChannel(false);
+    channelGeneration += 1;
+    const activeGeneration = channelGeneration;
+
+    logGameMessagesLifecycle('SUBSCRIBING', {
+      userId,
+      gameId,
+      gameMode,
+      prerequisitesMet,
+      priorChannelExisted,
+      cleanupRan,
+      retryAttempt,
     });
 
-  return () => void supabase.removeChannel(channel);
+    channel = supabase
+      .channel(`messages-${gameId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'game_messages', filter: `game_id=eq.${gameId}` },
+        (payload) => {
+          void (async () => {
+            try {
+              if (cleanupRan || channelGeneration !== activeGeneration) {
+                return;
+              }
+
+              if (!payload.new) {
+                console.warn('[Supabase] game_messages insert payload missing row data', {
+                  table: 'game_messages',
+                  functionName: 'subscribeToMessages',
+                  gameId,
+                  payload,
+                });
+                return;
+              }
+
+              const row = payload.new as GameMessageRow;
+              const profileMap = await loadMessageProfiles([row.user_id]);
+              if (cleanupRan || channelGeneration !== activeGeneration) {
+                return;
+              }
+
+              emitMessage(mapGameMessageRow(row, profileMap));
+            } catch (error) {
+              logSupabaseError('game_messages', 'realtime-insert-map', error, {
+                functionName: 'subscribeToMessages',
+                gameId,
+                payload,
+              });
+              onError?.(error);
+            }
+          })();
+        }
+      )
+      .subscribe((status, error) => {
+        logGameMessagesLifecycle(status, {
+          userId,
+          gameId,
+          gameMode,
+          prerequisitesMet,
+          priorChannelExisted,
+          cleanupRan,
+          retryAttempt,
+        }, error);
+
+        if (cleanupRan || channelGeneration !== activeGeneration) {
+          return;
+        }
+
+        if (status === 'SUBSCRIBED') {
+          retryAttempt = 0;
+          void fetchInitialMessages(activeGeneration);
+          return;
+        }
+
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          const realtimeError = error ?? new Error(`Realtime status: ${status}`);
+          logSupabaseError('game_messages', 'subscribe', realtimeError, {
+            functionName: 'subscribeToMessages',
+            gameId,
+            status,
+            gameMode,
+            userId,
+            prerequisitesMet,
+          });
+          onError?.(realtimeError);
+        }
+
+        if ((status === 'CHANNEL_ERROR' || status === 'CLOSED') && !retryTimeoutId) {
+          const boundedAttempt = Math.min(retryAttempt, GAME_MESSAGES_RETRY_DELAYS_MS.length - 1);
+          const retryDelayMs = GAME_MESSAGES_RETRY_DELAYS_MS[boundedAttempt];
+          retryAttempt += 1;
+
+          logGameMessagesLifecycle('RETRY_SCHEDULED', {
+            userId,
+            gameId,
+            gameMode,
+            prerequisitesMet,
+            priorChannelExisted: channel !== null,
+            cleanupRan,
+            reason: status,
+            retryAttempt,
+            retryDelayMs,
+          }, error);
+
+          removeChannel(false);
+          retryTimeoutId = setTimeout(() => {
+            retryTimeoutId = null;
+            if (cleanupRan) {
+              return;
+            }
+
+            startSubscription();
+          }, retryDelayMs);
+        }
+      });
+  };
+
+  startSubscription();
+
+  return () => {
+    clearRetryTimeout();
+    const priorChannelExisted = removeChannel(true);
+    logGameMessagesLifecycle('CLEANUP', {
+      userId,
+      gameId,
+      gameMode,
+      prerequisitesMet,
+      priorChannelExisted,
+      cleanupRan: true,
+    });
+  };
 };
 
 export async function sendMessage(input: SendMessageInput) {

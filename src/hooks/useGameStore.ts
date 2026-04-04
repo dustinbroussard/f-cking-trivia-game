@@ -3,7 +3,6 @@ import { GameState, Player, ChatMessage, GameInvite, PlayerProfile, RecentPlayer
 import { 
   subscribeToGame as subscribeToGameService, 
   subscribeToMessages as subscribeToMessagesService,
-  fetchMessages as fetchMessagesService,
   getGameById,
   updateGame as updateGameService,
   mapPostgresGameToState
@@ -59,6 +58,22 @@ export function useGameStore(user: any | null) {
     if (!game?.id) {
       messagesRequestIdRef.current += 1;
       setPlayers([]);
+      return;
+    }
+
+    const unsubscribeGame = subscribeToGameService(game.id, (updatedGame) => {
+      setGame(updatedGame);
+      setPlayers(updatedGame.players || []);
+    });
+
+    return () => {
+      unsubscribeGame();
+    };
+  }, [game?.id]);
+
+  useEffect(() => {
+    if (!game?.id) {
+      messagesRequestIdRef.current += 1;
       setMessages([]);
       return;
     }
@@ -67,53 +82,36 @@ export function useGameStore(user: any | null) {
     messagesRequestIdRef.current = requestId;
     setMessages([]);
 
-    const unsubscribeGame = subscribeToGameService(game.id, (updatedGame) => {
-      setGame(updatedGame);
-      setPlayers(updatedGame.players || []);
-    });
-
-    const unsubscribeMessages = subscribeToMessagesService(game.id, (message) => {
-      if (messagesRequestIdRef.current !== requestId) {
-        return;
-      }
-
-      setMessages((current) => mergeMessages(current, [message]));
-    }, (error) => {
-      if (messagesRequestIdRef.current !== requestId) {
-        return;
-      }
-
-      console.error('[useGameStore] game_messages subscription failed', {
-        gameId: game.id,
-        error,
-      });
-    });
-
-    fetchMessagesService(game.id)
-      .then((initialMessages) => {
+    const unsubscribeMessages = subscribeToMessagesService({
+      game,
+      userId: user?.id ?? null,
+      callback: (message) => {
         if (messagesRequestIdRef.current !== requestId) {
           return;
         }
 
-        setMessages((current) => mergeMessages(current, initialMessages));
-      })
-      .catch((error) => {
+        setMessages((current) => mergeMessages(current, [message]));
+      },
+      onError: (error) => {
         if (messagesRequestIdRef.current !== requestId) {
           return;
         }
 
-        console.error('[useGameStore] initial game_messages fetch failed', {
+        console.error('[useGameStore] game_messages subscription failed', {
           gameId: game.id,
+          userId: user?.id ?? null,
+          gameMode: game.gameMode ?? null,
+          playerIds: game.playerIds,
           error,
         });
-      });
+      },
+    });
 
     return () => {
       messagesRequestIdRef.current += 1;
-      unsubscribeGame();
       unsubscribeMessages();
     };
-  }, [game?.id, mergeMessages]);
+  }, [game?.id, game?.gameMode, game?.playerIds.join('|'), user?.id, mergeMessages]);
 
   useEffect(() => {
     if (!user?.id) {

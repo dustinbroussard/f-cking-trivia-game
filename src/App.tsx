@@ -393,6 +393,7 @@ export default function App() {
   const questionPoolTopUpCategoriesRef = useRef<Set<string>>(new Set());
   const heckleTimer = useRef<number | null>(null);
   const prolongedWaitTimerRef = useRef<number | null>(null);
+  const heckleCooldownRetryTimerRef = useRef<number | null>(null);
   const prevPlayersRef = useRef<Player[]>([]);
   const hasWarnedBehindRef = useRef(false);
   const hasTriggeredMatchLossRef = useRef(false);
@@ -1015,7 +1016,14 @@ export default function App() {
   };
 
   const queueOrShowSpecialEvent = (event: QueuedSpecialEvent) => {
-    const isBusy = resultPhase === 'revealing' || resultPhase === 'explaining' || showManualPickPrompt || !!roast;
+    const isBusy =
+      resultPhase === 'revealing' ||
+      resultPhase === 'explaining' ||
+      resultPhase === 'specialEvent' ||
+      showManualPickPrompt ||
+      !!roast ||
+      !!activeTrashTalk ||
+      !!activeTrashTalkEvent;
     if (isBusy) {
       queueSpecialEvent(event);
       return;
@@ -1033,6 +1041,11 @@ export default function App() {
     if (prolongedWaitTimerRef.current) {
       window.clearTimeout(prolongedWaitTimerRef.current);
       prolongedWaitTimerRef.current = null;
+    }
+
+    if (heckleCooldownRetryTimerRef.current) {
+      window.clearTimeout(heckleCooldownRetryTimerRef.current);
+      heckleCooldownRetryTimerRef.current = null;
     }
 
     setActiveHeckle((current) => (current === null ? current : null));
@@ -1053,6 +1066,11 @@ export default function App() {
   const dismissTrashTalkOverlay = () => {
     setActiveTrashTalk(null);
     setActiveTrashTalkEvent(null);
+    if (queuedSpecialEvent) {
+      setQueuedSpecialEvent(null);
+      showSpecialEvent(queuedSpecialEvent);
+      return;
+    }
     if (!showManualPickPrompt) {
       setResultPhase('idle');
     }
@@ -1724,6 +1742,10 @@ export default function App() {
     heckleRequestInFlightRef.current = null;
     heckleRequestAbortRef.current?.abort();
     heckleRequestAbortRef.current = null;
+    if (heckleCooldownRetryTimerRef.current) {
+      window.clearTimeout(heckleCooldownRetryTimerRef.current);
+      heckleCooldownRetryTimerRef.current = null;
+    }
     clearHeckles();
   }, [heckleWaitStateKey, shouldShowOpponentHeckles, visibleWaitingForOpponentUi]);
 
@@ -1786,12 +1808,29 @@ export default function App() {
 
     const now = Date.now();
     if (now - lastHeckleRequestAtRef.current < HECKLE_REQUEST_COOLDOWN_MS) {
+      const retryDelayMs = HECKLE_REQUEST_COOLDOWN_MS - (now - lastHeckleRequestAtRef.current);
+      if (heckleCooldownRetryTimerRef.current) {
+        window.clearTimeout(heckleCooldownRetryTimerRef.current);
+      }
+      heckleCooldownRetryTimerRef.current = window.setTimeout(() => {
+        heckleCooldownRetryTimerRef.current = null;
+        setPendingHeckleTrigger((current) => {
+          if (!current || current.dedupeKey !== pendingHeckleTrigger.dedupeKey) {
+            return current;
+          }
+
+          return {
+            ...current,
+            requestedAt: Date.now(),
+          };
+        });
+      }, retryDelayMs);
       console.info('[heckles] Request skipped: cooldown active', {
         waitStateKey: heckleWaitStateKey,
         trigger: pendingHeckleTrigger,
-        msRemaining: HECKLE_REQUEST_COOLDOWN_MS - (now - lastHeckleRequestAtRef.current),
+        msRemaining: retryDelayMs,
+        retryScheduled: true,
       });
-      setPendingHeckleTrigger(null);
       return;
     }
 
@@ -1972,6 +2011,10 @@ export default function App() {
         window.clearTimeout(prolongedWaitTimerRef.current);
         prolongedWaitTimerRef.current = null;
       }
+      if (heckleCooldownRetryTimerRef.current) {
+        window.clearTimeout(heckleCooldownRetryTimerRef.current);
+        heckleCooldownRetryTimerRef.current = null;
+      }
       trashTalkAbortRef.current?.abort();
       trashTalkAbortRef.current = null;
       trashTalkRequestIdRef.current += 1;
@@ -2001,9 +2044,48 @@ export default function App() {
     setDeferredTurnHandoff(null);
     clearCurrentTurnView();
     if (game?.id) {
-      void clearActiveGameQuestion(game.id).catch((err) => {
-        console.error(err);
-      });
+      if (nextDeferredTurnHandoff) {
+        const gameId = game.id;
+        const nextTurnOwner = nextDeferredTurnHandoff.nextTurnOwner;
+        void updateGame(gameId, {
+          current_turn: nextTurnOwner,
+          current_question_id: null,
+          current_question_category: null,
+          current_question_started_at: null,
+        })
+          .then(() => {
+            setGame((current) => {
+              if (!current || current.id !== gameId) {
+                return current;
+              }
+
+              return {
+                ...current,
+                currentTurn: nextTurnOwner,
+                currentQuestionId: null,
+                currentQuestionCategory: null,
+                currentQuestionStartedAt: null,
+                gameState: {
+                  ...current.gameState,
+                  currentQuestionId: null,
+                  currentQuestionCategory: null,
+                  currentQuestionStartedAt: null,
+                },
+              };
+            });
+          })
+          .catch((err) => {
+            console.error('[turnSync] Failed to persist deferred turn handoff', {
+              gameId,
+              nextTurnOwner,
+              error: err,
+            });
+          });
+      } else {
+        void clearActiveGameQuestion(game.id).catch((err) => {
+          console.error(err);
+        });
+      }
     }
 
     if (nextDeferredTurnHandoff) {

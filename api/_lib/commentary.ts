@@ -2,7 +2,7 @@ import type { EndgameRoastGenerationContext, EndgameRoastResult } from '../../sr
 import type { HeckleGenerationContext } from '../../src/content/heckles.js';
 import { MAX_HECKLES } from '../../src/content/heckles.js';
 import type { TrashTalkGenerationContext } from '../../src/content/trashTalk.js';
-import { extractAiDisplayLines, extractFirstAiDisplayLine } from '../../src/services/aiText.js';
+import { extractAiDisplayLines, extractAiDisplayText } from '../../src/services/aiText.js';
 import { generateGeminiTextResponse } from './gemini.js';
 
 export type CommentaryProvider = 'gemini' | 'openrouter';
@@ -318,7 +318,7 @@ function summarizeNormalizedResponse(task: GenerationConfig<unknown>['task'], ra
   }
 
   if (task === 'trash-talk') {
-    return extractFirstAiDisplayLine(rawText);
+    return extractAiDisplayText(rawText);
   }
 
   return summarizeRawText(rawText);
@@ -565,7 +565,7 @@ export function validateTrashTalk(rawText: string | null): ValidationResult<stri
 
   const parsed = findJsonValue(rawText);
   const parser = parsed ? 'json' : 'plain_text';
-  const text = cleanLine(extractFirstAiDisplayLine(parsed ?? rawText) ?? '');
+  const text = cleanLine(extractAiDisplayText(parsed ?? rawText) ?? '');
   const meta = buildMeta(rawText, parser, {
     parsed: !!parsed,
     normalizedLength: text.length,
