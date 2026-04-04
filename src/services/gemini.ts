@@ -43,6 +43,8 @@ interface TrashTalkApiPayload {
 const DEFAULT_HECKLE_TIMEOUT_MS = 6500;
 const DEFAULT_TRASH_TALK_TIMEOUT_MS = 5000;
 const DEFAULT_ENDGAME_ROAST_TIMEOUT_MS = 7000;
+const AI_REQUEST_RETRY_DELAY_MS = 450;
+const MAX_SHORT_FORM_RETRIES = 1;
 
 function isAbortError(error: unknown) {
   return error instanceof Error && (error.name === 'AbortError' || /aborted|timed out/i.test(error.message));
@@ -103,6 +105,55 @@ async function postAiJson<TResponse, TRequest>(endpoint: string, context: TReque
     return { response, data, rawBody } as AiJsonResponse<TResponse>;
   } finally {
     cleanup();
+  }
+}
+
+function sleep(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new Error('request aborted'));
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      signal?.removeEventListener('abort', abortListener);
+      resolve();
+    }, ms);
+
+    const abortListener = () => {
+      window.clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', abortListener);
+      reject(signal.reason ?? new Error('request aborted'));
+    };
+
+    signal?.addEventListener('abort', abortListener, { once: true });
+  });
+}
+
+async function withTransientRetry<T>(
+  label: string,
+  operation: () => Promise<T>,
+  options: AiRequestOptions,
+  maxRetries = MAX_SHORT_FORM_RETRIES
+) {
+  let attempt = 0;
+
+  while (true) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (isAbortError(error) || attempt >= maxRetries) {
+        throw error;
+      }
+
+      attempt += 1;
+      console.warn(`[${label}] transient failure; retrying`, {
+        attempt,
+        maxRetries,
+        error,
+      });
+      await sleep(AI_REQUEST_RETRY_DELAY_MS * attempt, options.signal);
+    }
   }
 }
 
@@ -220,7 +271,7 @@ export async function generateHeckles(context: HeckleGenerationContext, options:
   }
 
   try {
-    const data = await requestHecklesFromApi(context, options);
+    const data = await withTransientRetry('heckles/client', () => requestHecklesFromApi(context, options), options);
     const rawHeckles =
       Array.isArray(data.heckles) ? data.heckles : data.heckles ?? data.commentary ?? data.lines ?? data.message ?? data;
     const normalizedHeckles = extractAiDisplayLines(rawHeckles).slice(0, MAX_HECKLES);
@@ -255,7 +306,7 @@ export async function generateTrashTalk(
   }
 
   try {
-    const data = await requestTrashTalkFromApi(context, options);
+    const data = await withTransientRetry('trash-talk/client', () => requestTrashTalkFromApi(context, options), options);
     const normalizedTrashTalk = extractAiDisplayText(
       data.trashTalk ?? data.message ?? data.lines ?? data.commentary ?? data
     );

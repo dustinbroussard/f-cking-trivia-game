@@ -64,10 +64,12 @@ import { useQuestions } from './hooks/useQuestions';
 import { useSound } from './hooks/useSound';
 
 const QUESTION_TIME_LIMIT_SECONDS = 30;
-const AI_COMMENTARY_API_ENABLED = false;
+const AI_COMMENTARY_API_ENABLED = import.meta.env.VITE_AI_COMMENTARY_ENABLED !== 'false';
 const INITIAL_QUESTIONS_PER_CATEGORY = 6;
 const REFILL_QUESTIONS_PER_CATEGORY = 4;
 const QUESTION_POOL_LOW_WATERMARK = 2;
+const COMMENTARY_HECKLE_TIMEOUT_MS = 9500;
+const COMMENTARY_TRASH_TALK_TIMEOUT_MS = 8000;
 const logoSrc = publicAsset('logo.png');
 const WELCOME_AUDIO_SOURCES = [
   publicAsset('welcome1.mp3'),
@@ -90,6 +92,10 @@ type ResultPhase = 'idle' | 'revealing' | 'explaining' | 'specialEvent';
 type QueuedSpecialEvent =
   | { kind: 'MANUAL_CATEGORY_UNLOCK' }
   | { kind: 'TRASH_TALK'; event: TrashTalkEvent; message: string };
+interface QueuedHeckleRequest {
+  reason: HeckleTriggerReason;
+  queuedAt: number;
+}
 type LoadingStep =
   | 'idle'
   | 'creating_match'
@@ -313,6 +319,8 @@ export default function App() {
   const [lastTrashTalkEvent, setLastTrashTalkEvent] = useState<TrashTalkEvent | null>(null);
   const [activeHeckle, setActiveHeckle] = useState<string | null>(null);
   const [showHeckle, setShowHeckle] = useState(false);
+  const [queuedHeckleRequest, setQueuedHeckleRequest] = useState<QueuedHeckleRequest | null>(null);
+  const [queuedHeckleMessage, setQueuedHeckleMessage] = useState<string | null>(null);
   const [pendingTurnHandoff, setPendingTurnHandoff] = useState<PendingTurnHandoffState | null>(null);
   const [deferredTurnHandoff, setDeferredTurnHandoff] = useState<DeferredTurnHandoffState | null>(null);
   const [confirmAction, setConfirmAction] = useState<'quit' | 'signout' | null>(null);
@@ -340,6 +348,17 @@ export default function App() {
   const [isCheckingForResume, setIsCheckingForResume] = useState(false);
   const [resumeBanner, setResumeBanner] = useState<string | null>(null);
   const [matchIdCopied, setMatchIdCopied] = useState(false);
+
+  const isCommentaryBoothBusy =
+    resultPhase === 'revealing' ||
+    resultPhase === 'explaining' ||
+    resultPhase === 'specialEvent' ||
+    showManualPickPrompt ||
+    !!roast ||
+    showHeckle ||
+    !!activeHeckle ||
+    !!activeTrashTalk ||
+    !!activeTrashTalkEvent;
 
   const prevGameStatus = useRef<string | null>(null);
   const prevGameIdRef = useRef<string | null>(null);
@@ -929,6 +948,28 @@ export default function App() {
     });
   };
 
+  const queueHeckleRequest = (reason: HeckleTriggerReason) => {
+    setQueuedHeckleRequest((current) => {
+      if (!current || current.reason !== reason) {
+        return {
+          reason,
+          queuedAt: Date.now(),
+        };
+      }
+
+      return current;
+    });
+  };
+
+  const showQueuedHeckle = (message: string) => {
+    if (sfxEnabled) {
+      playSfx(heckleChimeAudioRef);
+    }
+
+    setActiveHeckle(message);
+    setShowHeckle(true);
+  };
+
   const showSpecialEvent = (event: QueuedSpecialEvent) => {
     if (event.kind === 'MANUAL_CATEGORY_UNLOCK') {
       setShowManualPickPrompt(true);
@@ -948,36 +989,15 @@ export default function App() {
   };
 
   const queueOrShowSpecialEvent = (event: QueuedSpecialEvent) => {
-    if (event.kind !== 'MANUAL_CATEGORY_UNLOCK') {
-      const isBusy =
-        resultPhase === 'revealing' ||
-        resultPhase === 'explaining' ||
-        resultPhase === 'specialEvent' ||
-        showManualPickPrompt ||
-        !!roast ||
-        !!activeTrashTalk ||
-        !!activeTrashTalkEvent;
-      if (isBusy) {
-        console.info('[trash-talk] Booth event dropped because the booth is busy', {
-          event,
-          resultPhase,
-          showManualPickPrompt,
-          roastVisible: !!roast,
-          activeTrashTalkEvent,
-        });
-        return;
-      }
-    }
-
-    const isBusy =
-      resultPhase === 'revealing' ||
-      resultPhase === 'explaining' ||
-      resultPhase === 'specialEvent' ||
-      showManualPickPrompt ||
-      !!roast ||
-      !!activeTrashTalk ||
-      !!activeTrashTalkEvent;
-    if (isBusy) {
+    if (isCommentaryBoothBusy) {
+      console.info('[trash-talk] Booth event queued because the booth is busy', {
+        event,
+        resultPhase,
+        showManualPickPrompt,
+        roastVisible: !!roast,
+        activeTrashTalkEvent,
+        showHeckle,
+      });
       queueSpecialEvent(event);
       return;
     }
@@ -993,6 +1013,7 @@ export default function App() {
 
     setActiveHeckle((current) => (current === null ? current : null));
     setShowHeckle((current) => (current ? false : current));
+    setQueuedHeckleMessage(null);
   };
 
   const dismissHeckleOverlay = () => {
@@ -1023,13 +1044,22 @@ export default function App() {
       return;
     }
 
-    if (showHeckle || !!activeHeckle || !!activeTrashTalk || !!activeTrashTalkEvent || heckleRequestAbortRef.current) {
-      console.info('[heckles] Event dropped because booth is busy', {
+    if (heckleRequestAbortRef.current) {
+      console.info('[heckles] Event queued because a request is already in flight', {
+        reason,
+      });
+      queueHeckleRequest(reason);
+      return;
+    }
+
+    if (isCommentaryBoothBusy) {
+      console.info('[heckles] Event queued because booth is busy', {
         reason,
         showHeckle,
         hasActiveHeckle: !!activeHeckle,
         activeTrashTalkEvent,
       });
+      queueHeckleRequest(reason);
       return;
     }
 
@@ -1058,7 +1088,7 @@ export default function App() {
     try {
       const generatedHeckles = await generateHeckles(requestPayload, {
         signal: requestController.signal,
-        timeoutMs: 6500,
+        timeoutMs: COMMENTARY_HECKLE_TIMEOUT_MS,
       });
 
       if (heckleRequestAbortRef.current !== requestController || requestId !== heckleRequestIdRef.current) {
@@ -1069,20 +1099,22 @@ export default function App() {
         return;
       }
 
-      if (showHeckle || !!activeHeckle || !!activeTrashTalk || !!activeTrashTalkEvent) {
-        console.info('[heckles] Response dropped because booth became busy', {
+      const nextHeckle = generatedHeckles[0] ?? null;
+      if (!nextHeckle) {
+        return;
+      }
+
+      if (isCommentaryBoothBusy) {
+        console.info('[heckles] Response queued because booth became busy', {
           reason,
           requestId,
           activeTrashTalkEvent,
         });
+        setQueuedHeckleMessage(nextHeckle);
         return;
       }
 
-      if (sfxEnabled) {
-        playSfx(heckleChimeAudioRef);
-      }
-      setActiveHeckle(generatedHeckles[0] ?? null);
-      setShowHeckle(true);
+      showQueuedHeckle(nextHeckle);
     } catch (error) {
       console.info('[heckles] Generation failed; event dropped', {
         reason,
@@ -1201,7 +1233,7 @@ export default function App() {
 
     const generatedMessage = await generateTrashTalk(context, {
       signal: requestController.signal,
-      timeoutMs: 5000,
+      timeoutMs: COMMENTARY_TRASH_TALK_TIMEOUT_MS,
     });
 
     if (
@@ -1252,6 +1284,31 @@ export default function App() {
       message: generatedMessage,
     });
   };
+
+  useEffect(() => {
+    if (!settings.commentaryEnabled || !queuedHeckleMessage || isCommentaryBoothBusy) {
+      return;
+    }
+
+    const nextMessage = queuedHeckleMessage;
+    setQueuedHeckleMessage(null);
+    showQueuedHeckle(nextMessage);
+  }, [isCommentaryBoothBusy, queuedHeckleMessage, settings.commentaryEnabled]);
+
+  useEffect(() => {
+    if (
+      !settings.commentaryEnabled ||
+      !queuedHeckleRequest ||
+      heckleRequestAbortRef.current ||
+      isCommentaryBoothBusy
+    ) {
+      return;
+    }
+
+    const { reason } = queuedHeckleRequest;
+    setQueuedHeckleRequest(null);
+    void triggerHeckle(reason);
+  }, [isCommentaryBoothBusy, queuedHeckleRequest, settings.commentaryEnabled]);
 
   const clearCurrentTurnView = () => {
     if (revealTimeoutRef.current) {
@@ -2198,6 +2255,7 @@ export default function App() {
     setActiveTrashTalk(null);
     setActiveTrashTalkEvent(null);
     setQueuedSpecialEvent((current) => current?.kind === 'TRASH_TALK' ? null : current);
+    setQueuedHeckleRequest(null);
     clearHeckles();
   }, [settings.commentaryEnabled]);
 
@@ -3379,6 +3437,7 @@ export default function App() {
     setShouldBlurQuestionBackground(false);
     setResultPhase('idle');
     setQueuedSpecialEvent(null);
+    setQueuedHeckleRequest(null);
     setActiveTrashTalk(null);
     setActiveTrashTalkEvent(null);
     setLastTrashTalkEvent(null);
@@ -3449,6 +3508,7 @@ export default function App() {
       setShouldBlurQuestionBackground(false);
       setResultPhase('idle');
       setQueuedSpecialEvent(null);
+      setQueuedHeckleRequest(null);
       setActiveTrashTalk(null);
       setActiveTrashTalkEvent(null);
       setLastTrashTalkEvent(null);
