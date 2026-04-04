@@ -1,6 +1,7 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ResultCard } from './ResultCard';
+import { isObviouslyInternalAiText } from '../services/aiText';
 
 interface HeckleOverlayProps {
   message: string | null;
@@ -10,7 +11,7 @@ interface HeckleOverlayProps {
 
 export const HeckleOverlay: React.FC<HeckleOverlayProps> = ({ message, visible, onClose }) => {
   const displayMessage = message?.trim() ?? '';
-  if (!visible || !displayMessage) return null;
+  if (!visible || !displayMessage || isObviouslyInternalAiText(displayMessage)) return null;
 
   return (
     <AnimatePresence mode="wait">

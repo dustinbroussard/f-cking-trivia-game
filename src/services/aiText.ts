@@ -11,6 +11,13 @@ const COMMON_RESPONSE_KEYS = new Set([
   'trash_talk',
 ]);
 
+const INTERNAL_TEXT_PATTERNS = [
+  /^(?:context|tone|rules|return this exact shape|return only|bad example|good example)\s*:/i,
+  /^(?:target player's name(?: to address directly)?|player being addressed|opponent currently playing|opponent|waiting reason|scoreboard|recent performance summary|last question|missed last question|category|difficulty|recent failure details|last two resolved questions|match rules|outcome summary|latest category swing)\s*:/i,
+  /^(?:rawresponsebody|parsedresponse|renderabilitycheck|requestsummary|providerdiagnostics|failuretype|validationreason|normalizedresponse|parsedtext|debug|provider|source)\s*:/i,
+  /^"(?:debug|provider|source|rawResponseBody|parsedResponse|renderabilityCheck|requestSummary|providerDiagnostics|failureType|validationReason|normalizedResponse|parsedText)"\s*:/i,
+];
+
 function stripCodeFence(text: string) {
   return text
     .trim()
@@ -30,6 +37,19 @@ function cleanDisplayText(text: string) {
     .trim();
 
   return cleaned.length > 0 ? cleaned : null;
+}
+
+export function isObviouslyInternalAiText(text: string) {
+  const trimmed = stripCodeFence(text).trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (/^\s*[{[]/.test(trimmed) && /"(?:debug|provider|source|requestSummary|providerDiagnostics|rawResponseBody|parsedResponse|renderabilityCheck)"/.test(trimmed)) {
+    return true;
+  }
+
+  return INTERNAL_TEXT_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 
 function collectFromObject(value: Record<string, unknown>) {
@@ -134,7 +154,7 @@ export function extractAiDisplayLines(value: unknown) {
 
   for (const line of extractTextValues(value)) {
     const normalized = line.trim();
-    if (!normalized || seen.has(normalized)) continue;
+    if (!normalized || isObviouslyInternalAiText(normalized) || seen.has(normalized)) continue;
     seen.add(normalized);
     lines.push(normalized);
   }

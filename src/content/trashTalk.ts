@@ -1,7 +1,7 @@
 import type { RecentAiQuestionContext } from './heckles.js';
 import { MODERN_HOST_PERSONA } from './hostPersona.js';
 
-export type TrashTalkEvent = 'OPPONENT_CORRECT' | 'PLAYER_FALLING_BEHIND' | 'MATCH_LOSS';
+export type TrashTalkEvent = 'OPPONENT_TROPHY' | 'MATCH_LOSS';
 
 export interface TrashTalkGenerationContext {
   event: TrashTalkEvent;
@@ -85,7 +85,8 @@ Tone:
 - Favor one incisive observation, one elegant comparison, or one nasty little reversal
 - If there is a category-specific angle available, use it
 - If the player is behind, make the line acknowledge the scoreboard pressure rather than speaking in generic swagger
-- If the event is OPPONENT_CORRECT, react to the opponent just landing a correct answer and taking momentum
+- If the event is OPPONENT_TROPHY, react to the opponent just collecting a trophy
+- Make trophy collection feel like a distinct, boastful swing rather than generic commentary about a correct answer
 - If the game is 0-0, frame it like an opening warning shot or first impression, not like anyone has already built a lead
 - If you mention the state of the match, use the exact supplied points and trophies
 - Do not claim the match is over unless the event is MATCH_LOSS

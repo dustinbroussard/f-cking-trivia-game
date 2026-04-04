@@ -1,6 +1,7 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { TrashTalkEvent } from '../content/trashTalk';
+import { isObviouslyInternalAiText } from '../services/aiText';
 import { ResultCard } from './ResultCard';
 
 interface TrashTalkOverlayProps {
@@ -11,7 +12,7 @@ interface TrashTalkOverlayProps {
 
 export const TrashTalkOverlay: React.FC<TrashTalkOverlayProps> = ({ event, message, onClose }) => {
   const displayMessage = message?.trim() ?? '';
-  if (!event || !displayMessage) return null;
+  if (!event || !displayMessage || isObviouslyInternalAiText(displayMessage)) return null;
 
   return (
     <AnimatePresence>

@@ -11,6 +11,7 @@ import {
   type ProviderTextResponse,
 } from '../api/_lib/commentary.ts';
 import { evaluateHeckleEligibility, getOpponentTrophyGain } from '../src/services/commentaryTriggers.ts';
+import { extractAiDisplayText, isObviouslyInternalAiText } from '../src/services/aiText.ts';
 import { generateHeckles, generateTrashTalk } from '../src/services/gemini.ts';
 
 function createMockResponse() {
@@ -257,7 +258,7 @@ test('opponent trophy collection is detected and trash-talk client calls the end
   );
 
   const message = await generateTrashTalk({
-    event: 'OPPONENT_CORRECT',
+    event: 'OPPONENT_TROPHY',
     playerName: 'Dustin',
     opponentName: 'Alex',
     playerScore: 1,
@@ -276,6 +277,13 @@ test('opponent trophy collection is detected and trash-talk client calls the end
   assert.match(message ?? '', /strategy/i);
 });
 
+test('internal prompt scaffolding is rejected from booth text', () => {
+  const internalText = 'Context:\\n- Target player\\n- Waiting reason: Waiting for Alex to finish.';
+
+  assert.equal(isObviouslyInternalAiText(internalText), true);
+  assert.equal(extractAiDisplayText(internalText), null);
+});
+
 test('trash-talk route falls back to OpenRouter and never returns empty success payloads', async () => {
   setProviderEnv();
   setCommentaryProviderOverride('gemini', async () => createProviderResponse(''));
@@ -284,7 +292,7 @@ test('trash-talk route falls back to OpenRouter and never returns empty success 
   const req = {
     method: 'POST',
     body: {
-      event: 'OPPONENT_CORRECT',
+      event: 'OPPONENT_TROPHY',
       playerName: 'Dustin',
       opponentName: 'Alex',
       playerScore: 1,
@@ -315,7 +323,7 @@ test('trash-talk route returns structured provider failure when both providers f
   const req = {
     method: 'POST',
     body: {
-      event: 'OPPONENT_CORRECT',
+      event: 'OPPONENT_TROPHY',
       playerName: 'Dustin',
       opponentName: 'Alex',
       playerScore: 1,

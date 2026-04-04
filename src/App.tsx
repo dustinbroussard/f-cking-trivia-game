@@ -40,7 +40,6 @@ import { CategoryReveal } from './components/CategoryReveal';
 import { EndgameOverlay } from './components/EndgameOverlay';
 import { InstallPrompt } from './components/InstallPrompt';
 import {
-  HECKLE_PROLONGED_WAIT_MS,
   HECKLE_REQUEST_COOLDOWN_MS,
   shouldEnableHeckles,
   type RecentAiQuestionContext,
@@ -985,7 +984,7 @@ export default function App() {
   const specialEventPriority = (event: QueuedSpecialEvent) => {
     if (event.kind === 'MANUAL_CATEGORY_UNLOCK') return 3;
     if (event.event === 'MATCH_LOSS') return 4;
-    if (event.event === 'OPPONENT_CORRECT') return 2;
+    if (event.event === 'OPPONENT_TROPHY') return 2;
     return 1;
   };
 
@@ -1017,6 +1016,27 @@ export default function App() {
   };
 
   const queueOrShowSpecialEvent = (event: QueuedSpecialEvent) => {
+    if (event.kind !== 'MANUAL_CATEGORY_UNLOCK') {
+      const isBusy =
+        resultPhase === 'revealing' ||
+        resultPhase === 'explaining' ||
+        resultPhase === 'specialEvent' ||
+        showManualPickPrompt ||
+        !!roast ||
+        !!activeTrashTalk ||
+        !!activeTrashTalkEvent;
+      if (isBusy) {
+        console.info('[trash-talk] Booth event dropped because the booth is busy', {
+          event,
+          resultPhase,
+          showManualPickPrompt,
+          roastVisible: !!roast,
+          activeTrashTalkEvent,
+        });
+        return;
+      }
+    }
+
     const isBusy =
       resultPhase === 'revealing' ||
       resultPhase === 'explaining' ||
@@ -1104,11 +1124,6 @@ export default function App() {
   const dismissTrashTalkOverlay = () => {
     setActiveTrashTalk(null);
     setActiveTrashTalkEvent(null);
-    if (queuedSpecialEvent) {
-      setQueuedSpecialEvent(null);
-      showSpecialEvent(queuedSpecialEvent);
-      return;
-    }
     if (!showManualPickPrompt) {
       setResultPhase('idle');
     }
@@ -1810,30 +1825,7 @@ export default function App() {
       window.clearTimeout(prolongedWaitTimerRef.current);
       prolongedWaitTimerRef.current = null;
     }
-
-    if (!heckleWaitStateKey || !shouldShowOpponentHeckles || lastHeckleWaitStateKeyRef.current === heckleWaitStateKey) {
-      return;
-    }
-
-    prolongedWaitTimerRef.current = window.setTimeout(() => {
-      const waitingMs = waitingStateEnteredAtRef.current
-        ? Date.now() - waitingStateEnteredAtRef.current
-        : HECKLE_PROLONGED_WAIT_MS;
-      queueHeckleTrigger(
-        'prolonged_wait',
-        `${heckleWaitStateKey}:prolonged_wait`,
-        `Player has been waiting on the opponent for ${Math.round(waitingMs / 1000)} seconds.`,
-        heckleWaitStateKey
-      );
-      prolongedWaitTimerRef.current = null;
-    }, HECKLE_PROLONGED_WAIT_MS);
-
-    return () => {
-      if (prolongedWaitTimerRef.current) {
-        window.clearTimeout(prolongedWaitTimerRef.current);
-        prolongedWaitTimerRef.current = null;
-      }
-    };
+    return undefined;
   }, [heckleWaitStateKey, shouldShowOpponentHeckles]);
 
   useEffect(() => {
@@ -2587,9 +2579,6 @@ export default function App() {
 
       if (game.winnerId && game.winnerId !== user?.id && !hasTriggeredMatchLossRef.current) {
         hasTriggeredMatchLossRef.current = true;
-        void triggerTrashTalk('MATCH_LOSS', {
-          outcomeSummary: `${players.find((player) => player.uid === game.winnerId)?.name || 'Your opponent'} closed out the match.`,
-        });
       }
     }
     prevGameStatus.current = game?.status || null;
@@ -2900,7 +2889,6 @@ export default function App() {
 
     if (opponent && previousOpponent) {
       const gainedCategory = getOpponentTrophyGain(previousOpponent, opponent);
-      const opponentScoreIncreased = (opponent.score || 0) > (previousOpponent.score || 0);
       if (gainedCategory) {
         console.info('[trash-talk] Opponent trophy event detected', {
           gameId: game.id,
@@ -2911,28 +2899,11 @@ export default function App() {
           nextTrophies: opponent.completedCategories?.length ?? 0,
         });
       }
-      if (opponentScoreIncreased && !gainedCategory) {
-        const latestOpponentQuestionHistory = getRecentQuestionHistoryForPlayer(game, questions, opponent.uid);
-        const latestOpponentQuestion = latestOpponentQuestionHistory[0];
-        void triggerTrashTalk('OPPONENT_CORRECT', {
-          playerName: currentPlayer?.name || playerProfile?.nickname || user.email || 'Player',
-          opponentName: opponent.name,
-          playerScore: currentPlayer?.score ?? 0,
-          opponentScore: opponent.score ?? 0,
-          playerTrophies: currentPlayer?.completedCategories?.length ?? 0,
-          opponentTrophies: opponent.completedCategories?.length ?? 0,
-          latestCategory: latestOpponentQuestion?.category || gainedCategory,
-          outcomeSummary: latestOpponentQuestion
-            ? `${opponent.name} just answered a ${latestOpponentQuestion.category} question correctly with "${latestOpponentQuestion.correctAnswer}".`
-            : `${opponent.name} just answered correctly and kept control.`,
-          recentQuestionHistory: latestOpponentQuestionHistory,
-        });
-      }
 
       if (gainedCategory) {
         const latestOpponentQuestionHistory = getRecentQuestionHistoryForPlayer(game, questions, opponent.uid);
         const latestOpponentQuestion = latestOpponentQuestionHistory[0];
-        void triggerTrashTalk('OPPONENT_CORRECT', {
+        void triggerTrashTalk('OPPONENT_TROPHY', {
           playerName: currentPlayer?.name || playerProfile?.nickname || user.email || 'Player',
           opponentName: opponent.name,
           playerScore: currentPlayer?.score ?? 0,
@@ -2965,30 +2936,6 @@ export default function App() {
           tag: `resume-${game.id}-${opponent.uid}`,
           onClickFocusWindow: true,
         });
-      }
-    }
-
-    if (currentPlayer && opponent) {
-      const scoreGap = (opponent.score || 0) - (currentPlayer.score || 0);
-      if (scoreGap >= 3 && !hasWarnedBehindRef.current) {
-        hasWarnedBehindRef.current = true;
-        void triggerTrashTalk('PLAYER_FALLING_BEHIND', {
-          playerName: currentPlayer.name,
-          opponentName: opponent.name,
-          playerScore: currentPlayer.score || 0,
-          opponentScore: opponent.score || 0,
-          playerTrophies: currentPlayer.completedCategories?.length ?? 0,
-          opponentTrophies: opponent.completedCategories?.length ?? 0,
-          outcomeSummary: `${currentPlayer.name} dropped behind by ${scoreGap} points while ${opponent.name} kept control.`,
-        });
-        queueHeckleTrigger(
-          'score_deficit',
-          `${game.id}:${currentPlayer.uid}:score_deficit:${scoreGap}`,
-          `${currentPlayer.name} fell behind by ${scoreGap} points while waiting on ${opponent.name}.`,
-          currentWaitingStateKeyRef.current
-        );
-      } else if (scoreGap < 3) {
-        hasWarnedBehindRef.current = false;
       }
     }
 
