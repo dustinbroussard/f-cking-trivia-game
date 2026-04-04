@@ -404,6 +404,7 @@ export default function App() {
     ...(game?.questionIds ?? []),
     ...questions.map((question) => question.id),
   ])];
+  const storedGameQuestionIds = game?.questionIds ?? [];
   const playableCategories = getPlayableCategories();
   const themeMode = settings.themeMode;
   const musicEnabled = settings.soundEnabled && settings.musicEnabled;
@@ -473,6 +474,13 @@ export default function App() {
     setPlayers(joinedGame.players || []);
     setGame(joinedGame);
   };
+
+  const resetLocalQuestionPoolState = useCallback(() => {
+    questionPoolTopUpCategoriesRef.current.clear();
+    activeQuestionIdRef.current = null;
+    setCurrentQuestion(null);
+    setQuestions([]);
+  }, [activeQuestionIdRef, setCurrentQuestion, setQuestions]);
 
   const playNewGameCue = useCallback(async () => {
     if (!settings.soundEnabled || !settings.musicEnabled || !newGameAudioRef.current) {
@@ -786,9 +794,11 @@ export default function App() {
       if (isNewJoiner && joinedGame.playerIds.length >= 2) {
         setIsFetchingQuestions(true);
         setLoadingStep('loading_questions');
+        resetLocalQuestionPoolState();
         await buildQuestionPoolForPlayers({
           gameId: joinedGame.id,
           playerIds: joinedGame.playerIds,
+          excludeQuestionIds: joinedGame.questionIds ?? [],
           replaceExisting: true,
         });
       }
@@ -1290,11 +1300,6 @@ export default function App() {
   const currentPlayerScore = currentPlayer?.score || 0;
   const opponentPlayerScore = opponentPlayer?.score || 0;
   const scoreDelta = currentPlayerScore - opponentPlayerScore;
-  const isBlockingHeckleModalOpen =
-    !!confirmAction ||
-    showSettings ||
-    !!resumePrompt ||
-    isMobileChatOpen;
   const isWaitingForOpponent =
     shouldEnableHeckles(isSolo) &&
     settings.commentaryEnabled &&
@@ -1325,12 +1330,6 @@ export default function App() {
     }
     if (currentPlayerCanAct) {
       return { allowed: false, reason: 'current_player_can_act' };
-    }
-    if (isHighPriorityOverlayActive) {
-      return { allowed: false, reason: 'critical_transition_active' };
-    }
-    if (isBlockingHeckleModalOpen) {
-      return { allowed: false, reason: 'modal_or_sheet_open' };
     }
     if (!currentPlayer || !opponentPlayer) {
       return { allowed: false, reason: 'missing_player_context' };
@@ -1735,17 +1734,14 @@ export default function App() {
           return;
         }
 
-        const latestEligibility = latestHeckleEligibilityRef.current;
-        const waitStateStillEligible =
-          currentWaitingStateKeyRef.current === heckleWaitStateKey &&
-          latestEligibility.allowed;
+        const waitStateStillEligible = currentWaitingStateKeyRef.current === heckleWaitStateKey;
 
         if (!waitStateStillEligible) {
           console.info('[heckles] Response discarded because waiting ended', {
             requestId,
             waitStateKey: heckleWaitStateKey,
             currentWaitStateKey: currentWaitingStateKeyRef.current,
-            eligibilityReason: latestEligibility.reason,
+            eligibilityReason: latestHeckleEligibilityRef.current.reason,
           });
           return;
         }
@@ -2801,10 +2797,10 @@ export default function App() {
 
       setIsFetchingQuestions(true);
       setLoadingStep('loading_questions');
+      resetLocalQuestionPoolState();
       await buildQuestionPoolForPlayers({
         gameId,
         playerIds: [user.id],
-        excludeQuestionIds: existingQuestionIds,
       });
 
       setGame(newGame);
@@ -2835,10 +2831,10 @@ export default function App() {
 
       setIsFetchingQuestions(true);
       setLoadingStep('loading_questions');
+      resetLocalQuestionPoolState();
       await buildQuestionPoolForPlayers({
         gameId,
         playerIds: [user.id],
-        excludeQuestionIds: existingQuestionIds,
       });
 
       setGame(newGame);
@@ -2926,9 +2922,11 @@ export default function App() {
       if (isNewJoiner && joinedGame.playerIds.length >= 2) {
         setIsFetchingQuestions(true);
         setLoadingStep('loading_questions');
+        resetLocalQuestionPoolState();
         await buildQuestionPoolForPlayers({
           gameId: joinedGame.id,
           playerIds: joinedGame.playerIds,
+          excludeQuestionIds: joinedGame.questionIds ?? [],
           replaceExisting: true,
         });
       }
@@ -2962,10 +2960,10 @@ export default function App() {
 
       setIsFetchingQuestions(true);
       setLoadingStep('loading_questions');
+      resetLocalQuestionPoolState();
       await buildQuestionPoolForPlayers({
         gameId,
         playerIds: [user.id],
-        excludeQuestionIds: existingQuestionIds,
       });
 
       await sendInvite({
@@ -3688,10 +3686,11 @@ export default function App() {
       // Generate new questions
       setIsFetchingQuestions(true);
       setLoadingStep('loading_questions');
+      resetLocalQuestionPoolState();
       const initialQuestions = await getQuestionsForSession({
         categories: playableCategories,
         count: INITIAL_QUESTIONS_PER_CATEGORY,
-        excludeQuestionIds: existingQuestionIds, // maybe clear this for new game?
+        excludeQuestionIds: storedGameQuestionIds,
         userIds: game.playerIds.length > 0 ? game.playerIds : [user.id],
       });
       setQuestions(initialQuestions);
@@ -4595,7 +4594,7 @@ export default function App() {
 
         <HeckleOverlay
           message={activeHeckle}
-          visible={showHeckle && shouldShowOpponentHeckles}
+          visible={showHeckle}
           onClose={dismissHeckleOverlay}
         />
 
