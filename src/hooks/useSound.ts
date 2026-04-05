@@ -9,8 +9,13 @@ function getRandomThemeTrack() {
 }
 
 export async function safePlay(media: HTMLMediaElement) {
+  if (!media) return false;
   try {
-    await media.play();
+    media.muted = false;
+    const playPromise = media.play();
+    if (playPromise !== undefined) {
+      await playPromise;
+    }
     return true;
   } catch (err) {
     console.warn('[Audio] autoplay blocked or playback failed', err);

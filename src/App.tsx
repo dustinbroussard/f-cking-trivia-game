@@ -625,8 +625,14 @@ export default function App() {
   }, [enableAudioFromGesture, settings, setAudioNeedsInteraction, syncAudioState]);
 
   const handleEnableSound = useCallback(async () => {
-    await applySettingsPatch({ soundEnabled: true }, { unlockAudio: true });
-  }, [applySettingsPatch]);
+    // Priority: execute audio unlock immediately during the user gesture callback
+    const played = await enableAudioFromGesture({ soundEnabled: true });
+    // Then persist settings (unlockAudio: false, as we just tried it manually)
+    await applySettingsPatch({ soundEnabled: true }, { unlockAudio: false });
+    if (played) {
+      setAudioNeedsInteraction(false);
+    }
+  }, [applySettingsPatch, enableAudioFromGesture, setAudioNeedsInteraction]);
 
   const getLoadingCopy = (step: LoadingStep) => {
     switch (step) {
@@ -3924,7 +3930,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => void handleEnableSound()}
-                  className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm font-bold text-cyan-900 dark:text-cyan-100"
+                  className="rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm font-bold text-zinc-950 transition-all active:scale-95 shadow-md active:shadow-inner dark:border-cyan-500/30 dark:bg-cyan-500/10 dark:text-cyan-100"
                 >
                   Tap to enable sound
                 </button>
@@ -4097,16 +4103,16 @@ export default function App() {
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -20, scale: 0.95 }}
                 transition={{ duration: 0.25, ease: 'easeOut' }}
-                className="mb-6 rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4 shadow-[0_8px_20px_rgba(6,182,212,0.12)]"
+                className="mb-6 rounded-xl border border-cyan-200 bg-cyan-50 p-4 shadow-[0_8px_20px_rgba(6,182,212,0.12)] dark:border-cyan-500/30 dark:bg-cyan-500/10"
                 role="status"
                 aria-live="polite"
               >
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-medium text-zinc-900 dark:text-cyan-100">Tap to enable sound.</p>
+                  <p className="text-sm font-bold text-zinc-950 dark:text-cyan-100">Tap to enable sound.</p>
                   <button
                     type="button"
                     onClick={() => void handleEnableSound()}
-                    className="rounded-lg bg-cyan-400 px-3 py-2 text-xs font-black uppercase tracking-widest text-cyan-950"
+                    className="rounded-lg bg-cyan-400 px-3 py-2 text-xs font-black uppercase tracking-widest text-cyan-950 transition-all active:scale-95 shadow-md active:shadow-inner"
                   >
                     Enable
                   </button>
