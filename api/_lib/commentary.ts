@@ -84,16 +84,16 @@ export interface CommentaryGenerationDebug {
 
 export type CommentaryGenerationResult<T> =
   | {
-      ok: true;
-      source: CommentaryProvider | 'local_fallback';
-      value: T;
-      debug: CommentaryGenerationDebug;
-    }
+    ok: true;
+    source: CommentaryProvider | 'local_fallback';
+    value: T;
+    debug: CommentaryGenerationDebug;
+  }
   | {
-      ok: false;
-      error: string;
-      debug: CommentaryGenerationDebug;
-    };
+    ok: false;
+    error: string;
+    debug: CommentaryGenerationDebug;
+  };
 
 export interface ProviderProbeResult<T> {
   ok: boolean;
@@ -202,12 +202,12 @@ function getProviderGenerator(provider: CommentaryProvider): ProviderGenerator {
   return provider === 'openrouter'
     ? generateOpenRouterText
     : (prompt, systemInstruction, temperature, maxTokens) =>
-        generateGeminiTextResponse(prompt, {
-          systemInstruction,
-          temperature,
-          maxOutputTokens: maxTokens,
-          timeoutMs: SHORT_FORM_COMMENTARY_TIMEOUT_MS,
-        });
+      generateGeminiTextResponse(prompt, {
+        systemInstruction,
+        temperature,
+        maxOutputTokens: maxTokens,
+        timeoutMs: SHORT_FORM_COMMENTARY_TIMEOUT_MS,
+      });
 }
 
 export function setCommentaryProviderOverride(provider: CommentaryProvider, generator: ProviderGenerator | null) {
@@ -629,27 +629,27 @@ async function tryProvider<T>(
     });
     return {
       validation,
-        diagnostic: {
-          provider,
-          model: providerResponse.model,
-          attempted: true,
-          durationMs: providerResponse.durationMs,
-          status: providerResponse.status,
-          requestSummary: providerResponse.requestSummary,
-          rawBody: providerResponse.rawBody,
-          rawText: providerResponse.text,
-          rawPreview: summarizeRawText(providerResponse.text),
-          normalizedResponse: summarizeNormalizedResponse(config.task, providerResponse.text),
-          parser: validation.meta.parser,
-          parsed: validation.meta.parsed,
-          normalizedLength: validation.meta.normalizedLength ?? null,
-          itemCount: validation.meta.itemCount ?? null,
-          validationOk: validation.ok,
-          failureType: validation.ok ? null : providerResponse.text?.trim() ? 'validator_rejected' : 'empty_response',
-          validationReason,
-          error: null,
-        },
-      };
+      diagnostic: {
+        provider,
+        model: providerResponse.model,
+        attempted: true,
+        durationMs: providerResponse.durationMs,
+        status: providerResponse.status,
+        requestSummary: providerResponse.requestSummary,
+        rawBody: providerResponse.rawBody,
+        rawText: providerResponse.text,
+        rawPreview: summarizeRawText(providerResponse.text),
+        normalizedResponse: summarizeNormalizedResponse(config.task, providerResponse.text),
+        parser: validation.meta.parser,
+        parsed: validation.meta.parsed,
+        normalizedLength: validation.meta.normalizedLength ?? null,
+        itemCount: validation.meta.itemCount ?? null,
+        validationOk: validation.ok,
+        failureType: validation.ok ? null : providerResponse.text?.trim() ? 'validator_rejected' : 'empty_response',
+        validationReason,
+        error: null,
+      },
+    };
   } catch (error) {
     const errorReason = summarizeError(error);
     const failureType = getFailureType(error);
