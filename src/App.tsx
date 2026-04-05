@@ -183,6 +183,7 @@ function getUsedQuestionIds(activeGame: GameState | null) {
   return new Set<string>([
     ...Object.keys(activeGame.answers || {}),
     ...(activeGame.currentQuestionId ? [activeGame.currentQuestionId] : []),
+    ...(activeGame.questionIds ?? []),
   ]);
 }
 
@@ -3395,11 +3396,11 @@ export default function App() {
           ? 'statusWaitingSoHostWaitsForJoin'
           : shouldHoldMultiplayerWrongFeedback
             ? 'multiplayer_wrong_feedback_holds_waiting_screen'
-          : isTurnHandoffPending
-            ? 'local_pending_turn_handoff_blocks_current_player'
-          : !shouldShowCurrentTurnStage
-            ? 'statusNotWaitingAndCurrentPlayerCannotActSoWaitForSpinner'
-            : 'gameReadyForCurrentPlayerAction',
+            : isTurnHandoffPending
+              ? 'local_pending_turn_handoff_blocks_current_player'
+              : !shouldShowCurrentTurnStage
+                ? 'statusNotWaitingAndCurrentPlayerCannotActSoWaitForSpinner'
+                : 'gameReadyForCurrentPlayerAction',
       staleCachedGameStateSuspected:
         game.status === 'waiting' && (game.playerIds.length > 1 || players.length > 1),
     });
@@ -4198,8 +4199,8 @@ export default function App() {
                 )}
                 <div
                   className={`h-full min-h-0 transition-all duration-300 ${resumePrompt
-                      ? 'pointer-events-none opacity-40'
-                      : ''
+                    ? 'pointer-events-none opacity-40'
+                    : ''
                     }`}
                 >
                   <GameLobby
